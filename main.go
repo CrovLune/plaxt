@@ -41,8 +41,10 @@ var (
 	date       string
 	storage    store.Store
 	apiSf      *singleflight.Group
+	webhookCache *webhookDedupeCache
 	traktSrv   *trakt.Trakt
 	trustProxy bool = true
+	requestLogMod string
 	
 	// Queue monitoring
 	queueEventLog   *store.QueueEventLog
