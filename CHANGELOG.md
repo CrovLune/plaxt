@@ -7,6 +7,22 @@ This fork continues the work of [XanderStrike's goplaxt](https://github.com/Xand
 ## [Unreleased]
 
 ### Added (2025-10-10)
+- **Queue Feature Testing Infrastructure**:
+  - Comprehensive unit test suite for offline queue system (`lib/store/queue_test.go`)
+  - Tests for enqueue, dequeue, delete operations across all storage backends
+  - Tests for FIFO ordering, user isolation, retry updates, and purge operations
+  - Tests for stale event handling (7+ days old)
+  - Test cleanup helpers to ensure isolated test runs
+  - All queue unit tests passing (7 tests covering core functionality)
+- **Queue Testing Documentation** (`QUEUE_TESTING_GUIDE.md`):
+  - Comprehensive testing guide with unit, integration, and manual testing instructions
+  - Manual testing methods using /etc/hosts, network proxies (toxiproxy), and test scripts
+  - Queue monitoring examples for DiskStore, PostgreSQL, and Redis
+  - Structured log monitoring guide with key operations to watch
+  - Performance testing and benchmark examples
+  - Troubleshooting guide for common queue issues
+  - Success criteria checklist based on feature spec
+  - Integration test templates for future implementation
 - **Admin Dashboard** - Comprehensive user management interface:
   - Full-featured admin dashboard at `/admin` with real-time user monitoring
   - Dashboard statistics: Total users, Healthy, Warning, and Expired token counts
@@ -62,6 +78,12 @@ This fork continues the work of [XanderStrike's goplaxt](https://github.com/Xand
   - Documentation for versioning strategy and Docker Hub integration
 
 ### Fixed (2025-10-10)
+- **Queue Feature Compilation Errors**:
+  - Fixed undefined `User` type in queue contract file (`specs/006-add-a-queueing/contracts/store-queue.go`)
+  - Added placeholder `User` struct definition to contract for isolated compilation
+  - Implemented missing queue methods in all mock stores (`MockSuccessStore`, `MockFailStore`, `persistTestStore`)
+  - Added all 8 queue interface methods: `EnqueueScrobble`, `DequeueScrobbles`, `DeleteQueuedScrobble`, `UpdateQueuedScrobbleRetry`, `GetQueueSize`, `GetQueueStatus`, `ListUsersWithQueuedEvents`, `PurgeQueueForUser`
+  - All test files now compile and pass successfully
 - Fixed manual renewal flow UI issue where incident ID and "Start Over" button incorrectly appeared at step 1 after canceling Trakt authorization
 - Banner actions (incident ID, Start Over button) now only display when on the result step (step 3)
 

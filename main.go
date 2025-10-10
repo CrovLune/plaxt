@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"crovlune/plaxt/lib/common"
 	"crovlune/plaxt/lib/config"
 	"crovlune/plaxt/lib/logging"
 	"crovlune/plaxt/lib/store"
@@ -1576,6 +1577,209 @@ func renderAdminDashboard(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "static/admin.html")
 }
 
+// ========== QUEUE DRAIN SYSTEM ==========
+
+// startQueueDrainSystem initializes health checker and queue drain orchestration.
+func startQueueDrainSystem(ctx context.Context, storage store.Store, traktSrv *trakt.Trakt) {
+	slog.Info("queue drain system starting")
+
+	// Start health checker
+	healthChecker := trakt.NewHealthChecker(traktSrv)
+	stateChan := healthChecker.Start(ctx)
+
+	// Listen for health state changes
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("queue drain system stopping")
+			return
+		case state := <-stateChan:
+			if state == "live" {
+				slog.Info("trakt service restored, initiating queue drain")
+				go initiateQueueDrain(ctx, storage, traktSrv)
+			}
+		}
+	}
+}
+
+// initiateQueueDrain starts per-user drain goroutines when Trakt becomes available.
+func initiateQueueDrain(ctx context.Context, storage store.Store, traktSrv *trakt.Trakt) {
+	userIDs, err := storage.ListUsersWithQueuedEvents(ctx)
+	if err != nil {
+		slog.Error("failed to list users with queued events",
+			"operation", "queue_drain_list_users",
+			"error", err,
+		)
+		return
+	}
+
+	if len(userIDs) == 0 {
+		slog.Info("no queued events to drain")
+		return
+	}
+
+	slog.Info("queue drain starting",
+		"operation", "queue_drain_start",
+		"user_count", len(userIDs),
+	)
+
+	// Start drain goroutine for each user
+	var wg sync.WaitGroup
+	for _, userID := range userIDs {
+		wg.Add(1)
+		go func(uid string) {
+			defer wg.Done()
+			drainUserQueue(ctx, storage, traktSrv, uid)
+		}(userID)
+	}
+
+	wg.Wait()
+	slog.Info("queue drain complete",
+		"operation", "queue_drain_complete",
+		"user_count", len(userIDs),
+	)
+}
+
+// drainUserQueue processes all queued events for a specific user.
+func drainUserQueue(ctx context.Context, storage store.Store, traktSrv *trakt.Trakt, userID string) {
+	startTime := time.Now()
+	successCount := 0
+	failureCount := 0
+
+	slog.Info("user queue drain starting",
+		"operation", "queue_drain_user_start",
+		"user_id", userID,
+	)
+
+	// Drain in batches of 100
+	for {
+		events, err := storage.DequeueScrobbles(ctx, userID, 100)
+		if err != nil {
+			slog.Error("failed to dequeue events",
+				"user_id", userID,
+				"error", err,
+			)
+			break
+		}
+
+		if len(events) == 0 {
+			break // Queue empty
+		}
+
+		// Process each event
+		for _, event := range events {
+			// Check for stale events (>7 days old)
+			if time.Since(event.CreatedAt) > 7*24*time.Hour {
+				slog.Warn("stale event processed",
+					"operation", "stale_event_processed",
+					"user_id", userID,
+					"event_id", event.ID,
+					"age_days", int(time.Since(event.CreatedAt).Hours()/24),
+				)
+			}
+
+			// Attempt to send with retry
+			if err := sendEventWithRetry(ctx, storage, traktSrv, event); err != nil {
+				slog.Error("queue event permanent failure",
+					"operation", "queue_event_failed",
+					"user_id", userID,
+					"event_id", event.ID,
+					"error", err,
+				)
+				failureCount++
+			} else {
+				slog.Info("queue event scrobbled",
+					"operation", "queue_event_scrobbled",
+					"user_id", userID,
+					"event_id", event.ID,
+				)
+				successCount++
+			}
+
+			// Delete from queue (whether success or permanent failure)
+			if err := storage.DeleteQueuedScrobble(ctx, event.ID); err != nil {
+				slog.Warn("failed to delete queued event",
+					"user_id", userID,
+					"event_id", event.ID,
+					"error", err,
+				)
+			}
+
+			// Rate limit: 10 events/sec = 100ms between events
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+
+	duration := time.Since(startTime)
+	slog.Info("user queue drain complete",
+		"operation", "queue_drain_user_complete",
+		"user_id", userID,
+		"success_count", successCount,
+		"failure_count", failureCount,
+		"duration_ms", duration.Milliseconds(),
+	)
+}
+
+// sendEventWithRetry attempts to send an event with exponential backoff.
+func sendEventWithRetry(ctx context.Context, storage store.Store, traktSrv *trakt.Trakt, event store.QueuedScrobbleEvent) error {
+	backoffSchedule := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second}
+
+	for attempt := 0; attempt < 5; attempt++ {
+		// Get user
+		user := storage.GetUser(event.UserID)
+		if user == nil {
+			return fmt.Errorf("user not found: %s", event.UserID)
+		}
+
+		// Reconstruct cache item
+		cacheItem := common.CacheItem{
+			PlayerUuid: event.PlayerUUID,
+			RatingKey:  event.RatingKey,
+			Body:       event.ScrobbleBody,
+		}
+
+		// Attempt scrobble via Trakt client
+		// We need to construct the request ourselves here
+		err := sendScrobble(traktSrv, event.Action, cacheItem, *user)
+
+		if err == nil {
+			return nil // Success
+		}
+
+		// Check if it's a transient error
+		if !isTransientError(err) {
+			return err // Permanent failure
+		}
+
+		// Transient error - update retry count and backoff
+		if attempt < 4 {
+			storage.UpdateQueuedScrobbleRetry(ctx, event.ID, attempt+1)
+			time.Sleep(backoffSchedule[attempt])
+		}
+	}
+
+	return fmt.Errorf("max retries exceeded")
+}
+
+// sendScrobble sends a scrobble request to Trakt (queue drain version).
+func sendScrobble(traktSrv *trakt.Trakt, action string, item common.CacheItem, user store.User) error {
+	return traktSrv.ScrobbleFromQueue(action, item, user.AccessToken)
+}
+
+// isTransientError checks if an error is temporary and worth retrying.
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "503") ||
+		strings.Contains(errStr, "502") ||
+		strings.Contains(errStr, "504") ||
+		strings.Contains(errStr, "429") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "connection refused")
+}
+
 func main() {
 	// init structured logging
 	logging.Init()
@@ -1606,6 +1810,11 @@ func main() {
 	apiSf = &singleflight.Group{}
 	webhookCache = newWebhookDedupeCache()
 	traktSrv = trakt.New(config.TraktClientId, config.TraktClientSecret, storage)
+
+	// Start queue drain system
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go startQueueDrainSystem(ctx, storage, traktSrv)
 
 	router := mux.NewRouter()
 	// Assumption: Behind a proper web server (nginx/traefik, etc) that removes/replaces trusted headers

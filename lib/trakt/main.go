@@ -414,9 +414,27 @@ func (t *Trakt) scrobbleRequest(action string, item common.CacheItem, user store
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		slog.Error("scrobble http error", "username", user.Username, "plaxt_id", user.ID, "action", action, "error", err)
+		// Network error - queue the event
+		t.enqueueScrobbleEvent(user, item, action)
 		return
 	}
 	defer resp.Body.Close()
+
+	// Check for service unavailability or rate limiting
+	if resp.StatusCode == http.StatusServiceUnavailable ||
+	   resp.StatusCode == http.StatusBadGateway ||
+	   resp.StatusCode == http.StatusGatewayTimeout ||
+	   resp.StatusCode == http.StatusTooManyRequests {
+		slog.Warn("scrobble failure, queueing event",
+			"username", user.Username,
+			"plaxt_id", user.ID,
+			"action", action,
+			"status", resp.StatusCode,
+			"trigger", item.Trigger,
+		)
+		t.enqueueScrobbleEvent(user, item, action)
+		return
+	}
 
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
 		item.LastAction = action
@@ -442,6 +460,28 @@ func (t *Trakt) scrobbleRequest(action string, item common.CacheItem, user store
 		slog.Info("scrobble success", "username", user.Username, "plaxt_id", user.ID, "action", action, "media", media, "progress", item.Body.Progress, "finished", finished, "trigger", item.Trigger)
 	} else {
 		slog.Error("scrobble failure", "username", user.Username, "plaxt_id", user.ID, "action", action, "status", resp.StatusCode, "trigger", item.Trigger)
+	}
+}
+
+// enqueueScrobbleEvent queues a scrobble event when Trakt is unavailable.
+func (t *Trakt) enqueueScrobbleEvent(user store.User, item common.CacheItem, action string) {
+	event := store.QueuedScrobbleEvent{
+		UserID:       user.ID,
+		ScrobbleBody: item.Body,
+		Action:       action,
+		Progress:     item.Body.Progress,
+		PlayerUUID:   item.PlayerUuid,
+		RatingKey:    item.RatingKey,
+	}
+
+	ctx := context.Background()
+	if err := t.storage.EnqueueScrobble(ctx, event); err != nil {
+		slog.Error("failed to enqueue scrobble event",
+			"username", user.Username,
+			"plaxt_id", user.ID,
+			"action", action,
+			"error", err,
+		)
 	}
 }
 
@@ -480,4 +520,73 @@ func NewHttpError(code int, message string) HttpError {
 		Code:    code,
 		Message: message,
 	}
+}
+
+// HealthCheck performs a lightweight health check against Trakt API.
+// Returns nil if Trakt is available, error otherwise.
+func (t *Trakt) HealthCheck(ctx context.Context) error {
+	// Use GET /users/settings as health check endpoint
+	// This is a lightweight endpoint that confirms API availability
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.trakt.tv/", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create health check request: %w", err)
+	}
+
+	req.Header.Set("trakt-api-version", "2")
+	req.Header.Set("trakt-api-key", t.ClientId)
+
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("health check request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Any 2xx or 3xx status is considered healthy
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		return nil
+	}
+
+	return fmt.Errorf("trakt API returned status %d", resp.StatusCode)
+}
+
+// ScrobbleFromQueue sends a queued scrobble event to Trakt.
+// Returns nil on success, error otherwise.
+func (t *Trakt) ScrobbleFromQueue(action string, item common.CacheItem, accessToken string) error {
+	URL := fmt.Sprintf("https://api.trakt.tv/scrobble/%s", action)
+
+	body, _ := json.Marshal(item.Body)
+	req, err := http.NewRequest("POST", URL, bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("failed to build scrobble request: %w", err)
+	}
+
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Add("trakt-api-version", "2")
+	req.Header.Add("trakt-api-key", t.ClientId)
+
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("scrobble http error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check for service unavailability or rate limiting
+	if resp.StatusCode == http.StatusServiceUnavailable ||
+	   resp.StatusCode == http.StatusBadGateway ||
+	   resp.StatusCode == http.StatusGatewayTimeout ||
+	   resp.StatusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("transient error: status %d", resp.StatusCode)
+	}
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		// Success - update cache
+		if err := json.NewDecoder(resp.Body).Decode(&item.Body); err == nil {
+			item.LastAction = action
+			t.storage.WriteScrobbleBody(item)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("scrobble failed with status %d", resp.StatusCode)
 }
