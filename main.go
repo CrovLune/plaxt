@@ -1296,6 +1296,193 @@ func healthcheckHandler() http.Handler {
 	)
 }
 
+// Admin API handlers
+
+type adminUserResponse struct {
+	ID               string    `json:"id"`
+	Username         string    `json:"username"`
+	TraktDisplayName string    `json:"trakt_display_name"`
+	WebhookURL       string    `json:"webhook_url"`
+	Updated          time.Time `json:"updated"`
+	TokenAge         float64   `json:"token_age_hours"`
+	Status           string    `json:"status"` // "healthy", "warning", "expired"
+}
+
+// listAdminUsers returns a list of all users with their status
+func listAdminUsers(w http.ResponseWriter, r *http.Request) {
+	if storage == nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	users := storage.ListUsers()
+	response := make([]adminUserResponse, 0, len(users))
+	root := SelfRoot(r)
+
+	for _, user := range users {
+		tokenAge := time.Since(user.Updated).Hours()
+		status := "healthy"
+		if tokenAge >= 24 {
+			status = "expired"
+		} else if tokenAge >= 20 {
+			status = "warning"
+		}
+
+		response = append(response, adminUserResponse{
+			ID:               user.ID,
+			Username:         user.Username,
+			TraktDisplayName: user.TraktDisplayName,
+			WebhookURL:       fmt.Sprintf("%s/api?id=%s", root, user.ID),
+			Updated:          user.Updated,
+			TokenAge:         tokenAge,
+			Status:           status,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// getAdminUser returns details for a specific user
+func getAdminUser(w http.ResponseWriter, r *http.Request) {
+	if storage == nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["id"])
+	if id == "" {
+		http.Error(w, "missing user id", http.StatusBadRequest)
+		return
+	}
+
+	user := storage.GetUser(id)
+	if user == nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	root := SelfRoot(r)
+	tokenAge := time.Since(user.Updated).Hours()
+	status := "healthy"
+	if tokenAge >= 24 {
+		status = "expired"
+	} else if tokenAge >= 20 {
+		status = "warning"
+	}
+
+	response := adminUserResponse{
+		ID:               user.ID,
+		Username:         user.Username,
+		TraktDisplayName: user.TraktDisplayName,
+		WebhookURL:       fmt.Sprintf("%s/api?id=%s", root, user.ID),
+		Updated:          user.Updated,
+		TokenAge:         tokenAge,
+		Status:           status,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// updateAdminUser updates user details
+func updateAdminUser(w http.ResponseWriter, r *http.Request) {
+	if storage == nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["id"])
+	if id == "" {
+		http.Error(w, "missing user id", http.StatusBadRequest)
+		return
+	}
+
+	user := storage.GetUser(id)
+	if user == nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	var payload struct {
+		Username         *string `json:"username"`
+		TraktDisplayName *string `json:"trakt_display_name"`
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := json.Unmarshal(body, &payload); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Update fields if provided
+	if payload.Username != nil && strings.TrimSpace(*payload.Username) != "" {
+		user.Username = strings.ToLower(strings.TrimSpace(*payload.Username))
+	}
+
+	if payload.TraktDisplayName != nil {
+		user.TraktDisplayName = strings.TrimSpace(*payload.TraktDisplayName)
+	}
+
+	// Save the updated user
+	storage.WriteUser(*user)
+
+	slog.Info("admin user updated", "id", id, "username", user.Username, "display_name", user.TraktDisplayName)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "User updated successfully",
+	})
+}
+
+// deleteAdminUser deletes a user
+func deleteAdminUser(w http.ResponseWriter, r *http.Request) {
+	if storage == nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["id"])
+	if id == "" {
+		http.Error(w, "missing user id", http.StatusBadRequest)
+		return
+	}
+
+	user := storage.GetUser(id)
+	if user == nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	// Delete the user
+	if !storage.DeleteUser(id, user.Username) {
+		http.Error(w, "failed to delete user", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("admin user deleted", "id", id, "username", user.Username)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "User deleted successfully",
+	})
+}
+
+// renderAdminDashboard serves the admin dashboard HTML
+func renderAdminDashboard(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "static/admin.html")
+}
+
 func main() {
 	// init structured logging
 	logging.Init()
@@ -1345,6 +1532,14 @@ func main() {
 	router.HandleFunc("/api", api).Methods("POST")
 	router.HandleFunc("/users/{id}/trakt-display-name", updateTraktDisplayName).Methods("POST")
 	router.Handle("/healthcheck", healthcheckHandler()).Methods("GET")
+	
+	// Admin routes
+	router.HandleFunc("/admin", renderAdminDashboard).Methods("GET")
+	router.HandleFunc("/admin/api/users", listAdminUsers).Methods("GET")
+	router.HandleFunc("/admin/api/users/{id}", getAdminUser).Methods("GET")
+	router.HandleFunc("/admin/api/users/{id}", updateAdminUser).Methods("PUT")
+	router.HandleFunc("/admin/api/users/{id}", deleteAdminUser).Methods("DELETE")
+	
 	router.HandleFunc("/", renderLandingPage).Methods("GET")
 	listen := os.Getenv("LISTEN")
 	if listen == "" {

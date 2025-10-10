@@ -3,6 +3,7 @@ package store
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 	"time"
 
 	"crovlune/plaxt/lib/common"
@@ -83,6 +84,13 @@ func (user *User) UpdateDisplayName(displayName *string) bool {
 	}
 	user.save()
 	return truncated
+}
+
+// UpdateUsername updates the Plex username for this user.
+// The username is normalized to lowercase for consistency.
+func (user *User) UpdateUsername(newUsername string) {
+	user.Username = strings.ToLower(strings.TrimSpace(newUsername))
+	user.save()
 }
 
 func (user User) save() {

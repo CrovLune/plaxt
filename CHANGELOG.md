@@ -7,6 +7,37 @@ This fork continues the work of [XanderStrike's goplaxt](https://github.com/Xand
 ## [Unreleased]
 
 ### Added (2025-10-10)
+- **Admin Dashboard** - Comprehensive user management interface:
+  - Full-featured admin dashboard at `/admin` with real-time user monitoring
+  - Dashboard statistics: Total users, Healthy, Warning, and Expired token counts
+  - User management table with sortable columns and hover effects
+  - Color-coded token status indicators (green/orange/red based on token age)
+  - Edit user modal: Update Plex username and Trakt display name
+  - Delete user modal: Confirmation dialog with safety warnings
+  - Auto-refresh every 30 seconds for real-time monitoring
+  - Responsive design optimized for desktop and mobile devices
+  - Empty state UI when no users exist
+  - Success/error notification system
+- **Admin API endpoints** for user management:
+  - `GET /admin` - Serves admin dashboard HTML
+  - `GET /admin/api/users` - List all users with token status and metadata
+  - `GET /admin/api/users/{id}` - Get detailed user information
+  - `PUT /admin/api/users/{id}` - Update user (username, display name)
+  - `DELETE /admin/api/users/{id}` - Delete user from storage
+- **Admin link in main UI**:
+  - Elegant admin access button in hero section (top-right corner)
+  - Glassmorphic design matching existing UI aesthetic
+  - Users icon with "Admin" label (icon-only on mobile)
+  - Smooth hover animations and transitions
+- **Token status monitoring system**:
+  - Automatic calculation of token age in hours
+  - Status classification: Healthy (<20hrs), Warning (20-24hrs), Expired (≥24hrs)
+  - Real-time status updates with color-coded visual indicators
+  - Token age display in human-readable format (hours/days)
+- **User model enhancements**:
+  - Added `UpdateUsername()` method for safe username updates
+  - Username normalization to lowercase for consistency
+  - Validation and sanitization for all user inputs
 - **Optimized CircleCI CI/CD pipeline** with three workflows:
   - Automated build and test on every commit with race detection and coverage reports
   - Nightly builds (scheduled daily at 2 AM UTC) with automatic versioning (`nightly-YYYYMMDD-commit`)
@@ -108,6 +139,17 @@ This fork represents a significant evolution of the original Plaxt project. Belo
 - Professional typography and spacing
 - Custom SVG icons for actions
 - Improved readability with better contrast ratios
+
+**Admin Dashboard**
+- NEW: Comprehensive user management interface at `/admin`
+- Real-time dashboard with token status monitoring
+- User statistics: Total, Healthy, Warning, Expired counts
+- Full CRUD operations: View, Edit, Delete users
+- Color-coded token status (green/orange/red based on age)
+- Modal-based editing with validation
+- Auto-refresh every 30 seconds
+- Accessible via admin link in main UI
+- Designed for use behind authentication middleware (e.g., Authentik)
 
 ### 🗄️ Multiple Storage Backend Support
 

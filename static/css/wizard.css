@@ -68,6 +68,7 @@ body::after {
   justify-items: center;
   gap: 12px;
   margin-bottom: clamp(32px, 5vw, 48px);
+  position: relative;
 }
 
 .hero-logo img {
@@ -563,5 +564,42 @@ select {
   .button-ghost {
     width: 100%;
     justify-content: center;
+  }
+}
+
+/* Admin link */
+.admin-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 180ms ease;
+  backdrop-filter: blur(8px);
+}
+
+.admin-link:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.24);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+}
+
+.admin-link svg {
+  opacity: 0.9;
+}
+
+@media (max-width: 640px) {
+  .admin-link span {
+    display: none;
+  }
+  .admin-link {
+    padding: 10px;
   }
 }
