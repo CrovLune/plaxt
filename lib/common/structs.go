@@ -1,5 +1,7 @@
 package common
 
+import "time"
+
 // Ids represent the IDs representing a media item accross the metadata providers
 type Ids struct {
 	Trakt *int    `json:"trakt,omitempty"`
@@ -53,4 +55,22 @@ type CacheItem struct {
 	Trigger    string       `json:"trigger"`
 	Body       ScrobbleBody `json:"body"`
 	LastAction string       `json:"last_action"`
+}
+
+// QueueStatus represents current state of the queue system for observability.
+type QueueStatus struct {
+	// Per-User Metrics
+	UserID         string        `json:"user_id"`
+	QueueSize      int           `json:"queue_size"`       // Current event count for this user
+	OldestEventAge time.Duration `json:"oldest_event_age"` // Age of oldest event in queue
+
+	// System-Wide State
+	Mode               string    `json:"mode"`                 // "live" | "queue"
+	LastHealthCheck    time.Time `json:"last_health_check"`    // Most recent health check attempt
+	LastSuccessfulSync time.Time `json:"last_successful_sync"` // Most recent successful scrobble
+
+	// Drain Metrics
+	DrainActive     bool `json:"drain_active"`     // Is drain goroutine running for this user?
+	EventsProcessed int  `json:"events_processed"` // Events drained in current session
+	EventsFailed    int  `json:"events_failed"`    // Events permanently failed in current session
 }

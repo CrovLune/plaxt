@@ -122,6 +122,30 @@ func (s MockSuccessStore) GetScrobbleBody(playerUuid, ratingKey string) common.C
 	return common.CacheItem{}
 }
 func (s MockSuccessStore) WriteScrobbleBody(item common.CacheItem) {}
+func (s MockSuccessStore) EnqueueScrobble(ctx context.Context, event store.QueuedScrobbleEvent) error {
+	return nil
+}
+func (s MockSuccessStore) DequeueScrobbles(ctx context.Context, userID string, limit int) ([]store.QueuedScrobbleEvent, error) {
+	return nil, nil
+}
+func (s MockSuccessStore) DeleteQueuedScrobble(ctx context.Context, eventID string) error {
+	return nil
+}
+func (s MockSuccessStore) UpdateQueuedScrobbleRetry(ctx context.Context, eventID string, retryCount int) error {
+	return nil
+}
+func (s MockSuccessStore) GetQueueSize(ctx context.Context, userID string) (int, error) {
+	return 0, nil
+}
+func (s MockSuccessStore) GetQueueStatus(ctx context.Context, userID string) (common.QueueStatus, error) {
+	return common.QueueStatus{}, nil
+}
+func (s MockSuccessStore) ListUsersWithQueuedEvents(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+func (s MockSuccessStore) PurgeQueueForUser(ctx context.Context, userID string) (int, error) {
+	return 0, nil
+}
 
 type MockFailStore struct{}
 
@@ -135,6 +159,30 @@ func (s MockFailStore) GetScrobbleBody(playerUuid, ratingKey string) common.Cach
 	panic(errors.New("OH NO"))
 }
 func (s MockFailStore) WriteScrobbleBody(item common.CacheItem) { panic(errors.New("OH NO")) }
+func (s MockFailStore) EnqueueScrobble(ctx context.Context, event store.QueuedScrobbleEvent) error {
+	return errors.New("OH NO")
+}
+func (s MockFailStore) DequeueScrobbles(ctx context.Context, userID string, limit int) ([]store.QueuedScrobbleEvent, error) {
+	return nil, errors.New("OH NO")
+}
+func (s MockFailStore) DeleteQueuedScrobble(ctx context.Context, eventID string) error {
+	return errors.New("OH NO")
+}
+func (s MockFailStore) UpdateQueuedScrobbleRetry(ctx context.Context, eventID string, retryCount int) error {
+	return errors.New("OH NO")
+}
+func (s MockFailStore) GetQueueSize(ctx context.Context, userID string) (int, error) {
+	return 0, errors.New("OH NO")
+}
+func (s MockFailStore) GetQueueStatus(ctx context.Context, userID string) (common.QueueStatus, error) {
+	return common.QueueStatus{}, errors.New("OH NO")
+}
+func (s MockFailStore) ListUsersWithQueuedEvents(ctx context.Context) ([]string, error) {
+	return nil, errors.New("OH NO")
+}
+func (s MockFailStore) PurgeQueueForUser(ctx context.Context, userID string) (int, error) {
+	return 0, errors.New("OH NO")
+}
 
 func TestHealthcheck(t *testing.T) {
 	var rr *httptest.ResponseRecorder
@@ -973,3 +1021,35 @@ func (s *persistTestStore) GetScrobbleBody(playerUuid, ratingKey string) common.
 }
 
 func (s *persistTestStore) WriteScrobbleBody(item common.CacheItem) {}
+
+func (s *persistTestStore) EnqueueScrobble(ctx context.Context, event store.QueuedScrobbleEvent) error {
+	return nil
+}
+
+func (s *persistTestStore) DequeueScrobbles(ctx context.Context, userID string, limit int) ([]store.QueuedScrobbleEvent, error) {
+	return nil, nil
+}
+
+func (s *persistTestStore) DeleteQueuedScrobble(ctx context.Context, eventID string) error {
+	return nil
+}
+
+func (s *persistTestStore) UpdateQueuedScrobbleRetry(ctx context.Context, eventID string, retryCount int) error {
+	return nil
+}
+
+func (s *persistTestStore) GetQueueSize(ctx context.Context, userID string) (int, error) {
+	return 0, nil
+}
+
+func (s *persistTestStore) GetQueueStatus(ctx context.Context, userID string) (common.QueueStatus, error) {
+	return common.QueueStatus{}, nil
+}
+
+func (s *persistTestStore) ListUsersWithQueuedEvents(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func (s *persistTestStore) PurgeQueueForUser(ctx context.Context, userID string) (int, error) {
+	return 0, nil
+}
