@@ -9,6 +9,8 @@ dist/
 *.test
 *.out
 plaxt-test
+plaxt
+docker-compose.yml
 
 # Runtime data
 keystore/
