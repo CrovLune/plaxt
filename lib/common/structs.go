@@ -41,10 +41,46 @@ type Movie struct {
 
 // ScrobbleBody represent the scrobbling status for a show or a movie
 type ScrobbleBody struct {
-	Progress int      `json:"progress"`
+	Progress int      `json:"-"` // Handled by custom unmarshaler
 	Movie    *Movie   `json:"movie,omitempty"`
 	Show     *Show    `json:"show,omitempty"`
 	Episode  *Episode `json:"episode,omitempty"`
+}
+
+// MarshalJSON implements json.Marshaler for ScrobbleBody.
+func (s ScrobbleBody) MarshalJSON() ([]byte, error) {
+	type Alias ScrobbleBody
+	return json.Marshal(&struct {
+		Progress int `json:"progress"`
+		*Alias
+	}{
+		Progress: s.Progress,
+		Alias:    (*Alias)(&s),
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler for ScrobbleBody.
+// Handles progress as both int and float from Trakt API responses.
+func (s *ScrobbleBody) UnmarshalJSON(data []byte) error {
+	type Alias ScrobbleBody
+	aux := &struct {
+		Progress interface{} `json:"progress"`
+		*Alias
+	}{
+		Alias: (*Alias)(s),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	switch v := aux.Progress.(type) {
+	case float64:
+		s.Progress = int(v)
+	case int:
+		s.Progress = v
+	case nil:
+		s.Progress = 0
+	}
+	return nil
 }
 
 // CacheItem represent an item in cache

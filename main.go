@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -35,14 +36,78 @@ import (
 )
 
 var (
-	version    string
-	commit     string
-	date       string
-	storage    store.Store
-	apiSf      *singleflight.Group
-	traktSrv   *trakt.Trakt
-	trustProxy bool = true
+	version       string
+	commit        string
+	date          string
+	storage       store.Store
+	apiSf         *singleflight.Group
+	traktSrv      *trakt.Trakt
+	trustProxy    bool   = true
+	requestLogMod string = "errors" // errors|important|all|off
+	webhookCache  *webhookDedupeCache
 )
+
+// webhookDedupeCache prevents rapid-fire duplicate webhook requests
+type webhookDedupeCache struct {
+	mu      sync.RWMutex
+	entries map[string]time.Time
+	traktScrobbles map[string]time.Time // tracks scrobbles by trakt account
+}
+
+func newWebhookDedupeCache() *webhookDedupeCache {
+	return &webhookDedupeCache{
+		entries: make(map[string]time.Time),
+		traktScrobbles: make(map[string]time.Time),
+	}
+}
+
+// shouldProcess returns true if this webhook should be processed (not a recent duplicate)
+// Deduplicates by Trakt account to prevent multiple Plaxt users from scrobbling the same event
+func (c *webhookDedupeCache) shouldProcess(plaxtID, traktDisplayName, event, ratingKey string, viewOffset int) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	// Key for this specific plaxt ID + media event
+	specificKey := fmt.Sprintf("%s:%s:%s:%d", plaxtID, event, ratingKey, viewOffset)
+	// Key for this Trakt account + media event (to prevent duplicate scrobbles to same Trakt)
+	traktKey := fmt.Sprintf("TRAKT:%s:%s:%s:%d", traktDisplayName, event, ratingKey, viewOffset)
+	
+	now := time.Now()
+	
+	// Check if THIS plaxt ID already processed this event recently (within 2 seconds)
+	if lastSeen, exists := c.entries[specificKey]; exists {
+		if time.Since(lastSeen) < 2*time.Second {
+			return false // Same plaxt ID, duplicate within 2 seconds
+		}
+	}
+	
+	// Check if this Trakt account already scrobbled this media event recently (within 1 second)
+	// This prevents multiple Plaxt users connected to the same Trakt from duplicate scrobbling
+	if lastSeen, exists := c.traktScrobbles[traktKey]; exists {
+		if time.Since(lastSeen) < 1*time.Second {
+			return false // Same Trakt account already scrobbled within 1 second
+		}
+	}
+	
+	// Update timestamps
+	c.entries[specificKey] = now
+	c.traktScrobbles[traktKey] = now
+	
+	// Clean up old entries (older than 10 seconds) to prevent memory leak
+	cutoff := now.Add(-10 * time.Second)
+	for k, t := range c.entries {
+		if t.Before(cutoff) {
+			delete(c.entries, k)
+		}
+	}
+	for k, t := range c.traktScrobbles {
+		if t.Before(cutoff) {
+			delete(c.traktScrobbles, k)
+		}
+	}
+	
+	return true
+}
 
 var errUsernameMismatch = errors.New("manual renewal username mismatch")
 
@@ -1129,7 +1194,15 @@ func api(w http.ResponseWriter, r *http.Request) {
 
 	var payload []byte
 	ct := strings.ToLower(r.Header.Get("Content-Type"))
-	if strings.Contains(ct, "multipart/form-data") {
+	if strings.Contains(ct, "application/x-www-form-urlencoded") {
+		// Handle urlencoded payload=...
+		if err := r.ParseForm(); err == nil {
+			if val := r.PostFormValue("payload"); strings.TrimSpace(val) != "" {
+				payload = []byte(val)
+			}
+		}
+	}
+	if len(payload) == 0 && strings.Contains(ct, "multipart/form-data") {
 		mr, mErr := r.MultipartReader()
 		if mErr == nil {
 			for {
@@ -1149,6 +1222,15 @@ func api(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(payload) == 0 {
 		payload = body
+		// Also handle legacy body starting with "payload=" (url-encoded)
+		if bytes.HasPrefix(bytes.TrimSpace(body), []byte("payload=")) {
+			parts := strings.SplitN(string(body), "=", 2)
+			if len(parts) == 2 {
+				if decoded, uerr := url.QueryUnescape(parts[1]); uerr == nil {
+					payload = []byte(decoded)
+				}
+			}
+		}
 	}
 	// Try strict JSON first; fall back to legacy regex extraction
 	webhook, err := plexhooks.ParseWebhook(payload)
@@ -1156,17 +1238,18 @@ func api(w http.ResponseWriter, r *http.Request) {
 		regex := regexp.MustCompile("({.*})")
 		match := regex.FindStringSubmatch(string(payload))
 		if len(match) == 0 {
+			slog.Error("webhook bad request: missing or invalid payload", "content_type", ct)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		webhook, err = plexhooks.ParseWebhook([]byte(match[0]))
 		if err != nil || webhook == nil {
+			slog.Error("webhook bad request: payload parse failed", "error", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 	}
 	username := strings.ToLower(webhook.Account.Title)
-		slog.Info("webhook received", "event", webhook.Event, "username", username, "id", id, "type", strings.ToLower(webhook.Metadata.Type), "title", webhook.Metadata.Title, "show", webhook.Metadata.GrandparentTitle, "season", webhook.Metadata.ParentIndex, "episode", webhook.Metadata.Index, "server", webhook.Server.Title, "client", webhook.Player.Title)
 
 	// Handle the requests of the same user one at a time
 	key := fmt.Sprintf("%s@%s", username, id)
@@ -1208,6 +1291,16 @@ func api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := userInf.(*store.User)
+	
+	// Check for duplicate scrobble to same Trakt account
+	if !webhookCache.shouldProcess(id, user.TraktDisplayName, webhook.Event, webhook.Metadata.RatingKey, webhook.Metadata.ViewOffset) {
+		slog.Debug("webhook duplicate filtered", "event", webhook.Event, "username", username, "id", id, "trakt_display_name", user.TraktDisplayName, "rating_key", webhook.Metadata.RatingKey)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"result": "duplicate_filtered"})
+		return
+	}
+	
+	slog.Info("webhook received", "event", webhook.Event, "username", username, "id", id, "type", strings.ToLower(webhook.Metadata.Type), "title", webhook.Metadata.Title, "show", webhook.Metadata.GrandparentTitle, "season", webhook.Metadata.ParentIndex, "episode", webhook.Metadata.Index, "server", webhook.Server.Title, "client", webhook.Player.Title)
 
 	if username == user.Username {
 		traktSrv.Handle(webhook, *user)
@@ -1695,6 +1788,10 @@ func main() {
 	if v := strings.ToLower(strings.TrimSpace(os.Getenv("TRUST_PROXY"))); v != "" {
 		trustProxy = v == "1" || v == "true" || v == "yes"
 	}
+	// request logging mode
+	if m := strings.ToLower(strings.TrimSpace(os.Getenv("REQUEST_LOG"))); m != "" {
+		requestLogMod = m
+	}
 
 	slog.Info("starting", "version", version, "commit", commit, "date", date)
 	if os.Getenv("POSTGRESQL_URL") != "" {
@@ -1711,6 +1808,7 @@ func main() {
 		slog.Info("using disk storage")
 	}
 	apiSf = &singleflight.Group{}
+	webhookCache = newWebhookDedupeCache()
 	traktSrv = trakt.New(config.TraktClientId, config.TraktClientSecret, storage)
 
 	// Start queue drain system
@@ -1760,19 +1858,43 @@ func main() {
 
 // requestLoggerMiddleware logs method, path, status, and duration for each request.
 func requestLoggerMiddleware() mux.MiddlewareFunc {
+	interesting := map[string]struct{}{
+		"/api":               {},
+		"/authorize":         {},
+		"/manual/authorize":  {},
+		"/oauth/state":       {},
+		"/healthcheck":       {},
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			sr := &statusRecorder{ResponseWriter: w, status: 200}
 			start := time.Now()
 			next.ServeHTTP(sr, r)
-			duration := time.Since(start)
-			slog.Info("request",
-				"method", r.Method,
-				"path", r.URL.Path,
-				"status", sr.status,
-				"duration_ms", duration.Milliseconds(),
-				"remote", r.RemoteAddr,
-			)
+			d := time.Since(start)
+
+			shouldLog := false
+			switch requestLogMod {
+			case "off":
+				shouldLog = false
+			case "all":
+				shouldLog = true
+			case "important":
+				_, ok := interesting[r.URL.Path]
+				shouldLog = ok || sr.status >= 400
+			default: // errors
+				shouldLog = sr.status >= 400
+			}
+			if !shouldLog {
+				return
+			}
+			attrs := []any{"method", r.Method, "path", r.URL.Path, "status", sr.status, "duration_ms", d.Milliseconds(), "remote", r.RemoteAddr}
+			if sr.status >= 500 {
+				slog.Error("request", attrs...)
+			} else if sr.status >= 400 {
+				slog.Error("request", attrs...)
+			} else {
+				slog.Info("request", attrs...)
+			}
 		})
 	}
 }
