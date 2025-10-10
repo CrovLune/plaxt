@@ -1,0 +1,875 @@
+{{/* Guided Plaxt UI template */}}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Plaxt</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="/static/img/favicon.png">
+    <link rel="stylesheet" href="/static/css/wizard.css">
+  </head>
+  <body data-root="{{.SelfRoot}}" data-client-id="{{.ClientID}}" data-mode="{{.Mode}}" data-onboarding-result="{{.Onboarding.Result}}" data-onboarding-username="{{.Onboarding.Username}}" data-manual-result="{{.Manual.Result}}" data-has-manual="{{if .Manual.HasUsers}}true{{else}}false{{end}}" data-manual-display-name="{{.Manual.DisplayName}}" data-manual-display-warning="{{.Manual.DisplayNameWarning}}" data-manual-display-missing="{{if .Manual.DisplayNameMissing}}true{{else}}false{{end}}">
+    <div class="wizard-container" id="wizard-root">
+      <div class="hero-branding">
+        <!-- <div class="hero-logo">
+          <img src="/static/img/plaxt-logo.png" alt="Plaxt logo">
+        </div> -->
+        <h1 class="hero-title">Plaxt</h1>
+        <p class="hero-subtitle">Plex provides webhooks for Plex Pass subscribers. Plaxt listens for those webhooks and scrobbles your plays to Trakt.</p>
+      </div>
+      <div class="wizard-nav">
+        <button type="button" data-mode-toggle="onboarding" class="{{if ne .Mode "renew"}}is-active{{end}}">Onboarding</button>
+        <button type="button" data-mode-toggle="renew" class="{{if eq .Mode "renew"}}is-active{{end}}" {{if not .Manual.Enabled}}disabled{{end}}>Manual renewal</button>
+      </div>
+
+      {{/* Onboarding wizard */}}
+      {{ $onboardingSteps := .Onboarding.Steps }}
+      {{ $stepOne := index $onboardingSteps 0 }}
+      {{ $stepTwo := index $onboardingSteps 1 }}
+      {{ $stepThree := index $onboardingSteps 2 }}
+      <section class="wizard-section {{if eq .Mode "renew"}}mode-hidden{{end}}" data-mode-section="onboarding">
+        <div class="wizard-progress">
+          <div class="wizard-progress-item" data-state="{{$stepOne.State}}" data-step-id="{{$stepOne.ID}}">
+            <div class="wizard-progress-title">{{$stepOne.Title}}</div>
+            <p>{{$stepOne.Description}}</p>
+            {{if and (ne $stepOne.Summary "") (eq $stepOne.State "complete")}}
+              <p class="step-complete-summary">{{$stepOne.Summary}}</p>
+            {{end}}
+          </div>
+          <div class="wizard-progress-item" data-state="{{$stepTwo.State}}" data-step-id="{{$stepTwo.ID}}">
+            <div class="wizard-progress-title">{{$stepTwo.Title}}</div>
+            <p>{{$stepTwo.Description}}</p>
+            {{if and (ne $stepTwo.Summary "") (eq $stepTwo.State "complete")}}
+              <p class="step-complete-summary">{{$stepTwo.Summary}}</p>
+            {{end}}
+          </div>
+          <div class="wizard-progress-item" data-state="{{$stepThree.State}}" data-step-id="{{$stepThree.ID}}" data-result="{{.Onboarding.Result}}">
+            <div class="wizard-progress-title">{{$stepThree.Title}}</div>
+            <p>{{$stepThree.Description}}</p>
+            {{if and (ne $stepThree.Summary "") (eq $stepThree.State "complete")}}
+              <p class="step-complete-summary">{{$stepThree.Summary}}</p>
+            {{end}}
+          </div>
+        </div>
+
+        {{with .Onboarding.Banner}}
+          <div class="banner banner-{{.Type}}" role="status">{{.Message}}</div>
+        {{end}}
+
+        <div class="wizard-step" data-step-id="{{$stepOne.ID}}" data-state="{{$stepOne.State}}">
+          <h3 tabindex="-1">{{$stepOne.Title}}</h3>
+          <p>Enter your Plex username so Plaxt can personalise the setup experience.</p>
+          <form class="js-onboarding-form" novalidate>
+            <label for="onboarding-username">Plex username</label>
+            <input id="onboarding-username" class="input-field js-onboarding-username" name="username" autocomplete="username" value="{{.Onboarding.Username}}" required>
+            <p class="field-error js-onboarding-error"></p>
+            <div class="wizard-actions">
+              <button type="submit" class="button-primary">Continue</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="wizard-step" data-step-id="{{$stepTwo.ID}}" data-state="{{$stepTwo.State}}">
+          <h3 tabindex="-1">{{$stepTwo.Title}}</h3>
+          <p>Review the details below, then authorize with Trakt when you're ready.</p>
+          <div class="wizard-summary">
+            <p><strong>Plex user:</strong> <span class="js-onboarding-summary-name">{{if .Onboarding.Username}}{{.Onboarding.Username}}{{else}}—{{end}}</span></p>
+            <p>Need access? <a href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener">Create a Trakt application</a> and configure the callback to <code>{{.SelfRoot}}/authorize</code>.</p>
+          </div>
+          <p class="field-error js-onboarding-auth-error"></p>
+          <div class="wizard-actions">
+            <button type="button" class="button-primary button-with-icon js-onboarding-start">
+              <span class="button-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"></circle>
+                  <path d="M8.5 8.5l7 7m0-7l-7 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+                </svg>
+              </span>
+              <span>Authorize with Trakt</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="wizard-step" data-step-id="{{$stepThree.ID}}" data-state="{{$stepThree.State}}">
+          <h3 tabindex="-1">{{$stepThree.Title}}</h3>
+          <p>Copy this webhook into Plex (<em>Settings → Webhooks</em>) so Plaxt can scrobble automatically.</p>
+          <div class="copy-field">
+            <pre id="onboarding-webhook">{{.Onboarding.WebhookURL}}</pre>
+            <button type="button" class="button-secondary js-copy-webhook" data-copy-target="#onboarding-webhook">Copy webhook URL</button>
+          </div>
+          <div class="wizard-actions wizard-actions--center">
+            <button type="button" class="button-ghost js-reset-onboarding">Start Over</button>
+          </div>
+        </div>
+      </section>
+
+      {{/* Manual renewal wizard */}}
+      {{ $manualSteps := .Manual.Steps }}
+      {{ $manualStepOne := index $manualSteps 0 }}
+      {{ $manualStepTwo := index $manualSteps 1 }}
+      {{ $manualStepThree := index $manualSteps 2 }}
+      <section class="wizard-section {{if ne .Mode "renew"}}mode-hidden{{end}}" data-mode-section="renew">
+        <div class="wizard-progress">
+          <div class="wizard-progress-item" data-state="{{$manualStepOne.State}}" data-step-id="{{$manualStepOne.ID}}">
+            <div class="wizard-progress-title">{{$manualStepOne.Title}}</div>
+            <p>{{$manualStepOne.Description}}</p>
+            {{if and (ne $manualStepOne.Summary "") (eq $manualStepOne.State "complete")}}
+              <p class="step-complete-summary">{{$manualStepOne.Summary}}</p>
+            {{end}}
+          </div>
+          <div class="wizard-progress-item" data-state="{{$manualStepTwo.State}}" data-step-id="{{$manualStepTwo.ID}}">
+            <div class="wizard-progress-title">{{$manualStepTwo.Title}}</div>
+            <p>{{$manualStepTwo.Description}}</p>
+            {{if and (ne $manualStepTwo.Summary "") (eq $manualStepTwo.State "complete")}}
+              <p class="step-complete-summary">{{$manualStepTwo.Summary}}</p>
+            {{end}}
+          </div>
+          <div class="wizard-progress-item" data-state="{{$manualStepThree.State}}" data-step-id="{{$manualStepThree.ID}}" data-result="{{.Manual.Result}}">
+            <div class="wizard-progress-title">{{$manualStepThree.Title}}</div>
+            <p>{{$manualStepThree.Description}}</p>
+            {{if and (ne $manualStepThree.Summary "") (eq $manualStepThree.State "complete")}}
+              <p class="step-complete-summary">{{$manualStepThree.Summary}}</p>
+            {{end}}
+          </div>
+        </div>
+
+        {{if .Manual.HasUsers}}
+          {{with .Manual.Banner}}
+            <div class="banner banner-{{.Type}}" role="status">
+              <p class="banner-message">{{.Message}}</p>
+              {{if .Detail}}<p class="banner-detail">{{.Detail}}</p>{{end}}
+              {{if and (ne .Type "success") .CorrelationID (eq $manualStepThree.State "active")}}
+                <p class="banner-correlation">
+                  <span class="banner-correlation-label">Incident ID:</span>
+                  <code class="banner-correlation-value">{{.CorrelationID}}</code>
+                </p>
+              {{end}}
+              {{if and (or (eq .Type "error") (eq .Type "cancelled")) (eq $manualStepThree.State "active")}}
+                <div class="banner-actions">
+                  <button type="button" class="button-secondary js-reset-manual">Start Over</button>
+                </div>
+              {{end}}
+            </div>
+          {{end}}
+
+          <div class="wizard-step" data-step-id="{{$manualStepOne.ID}}" data-state="{{$manualStepOne.State}}">
+            <h3 tabindex="-1">{{$manualStepOne.Title}}</h3>
+            <p>Select the user whose tokens you need to refresh.</p>
+            <label for="manual-user">Plaxt user</label>
+            <select id="manual-user" class="input-field js-renew-select">
+              <option value="">Choose a user…</option>
+              {{range .Manual.Users}}
+                <option value="{{.ID}}" data-username="{{.Username}}" data-display-name="{{.TraktDisplayName}}" data-webhook="{{.WebhookURL}}" data-last-updated="{{.LastUpdated}}" {{if eq $.Manual.SelectedID .ID}}selected{{end}}>{{.DisplayLabel}}</option>
+              {{end}}
+            </select>
+            <p class="field-error js-renew-error"></p>
+            <div class="wizard-actions">
+              <button type="button" class="button-primary js-manual-continue">Continue</button>
+            </div>
+          </div>
+
+          <div class="wizard-step" data-step-id="{{$manualStepTwo.ID}}" data-state="{{$manualStepTwo.State}}">
+            <h3 tabindex="-1">{{$manualStepTwo.Title}}</h3>
+            <p>Confirm the webhook details before you continue to Trakt.</p>
+            <div class="wizard-summary">
+              <p><strong>Plex user:</strong> <span class="js-manual-summary-name">{{if .Manual.SelectedUser}}{{.Manual.SelectedUser.Username}}{{if .Manual.SelectedUser.TraktDisplayName}} ({{.Manual.SelectedUser.TraktDisplayName}}){{end}}{{else}}—{{end}}</span></p>
+              <p><strong>Trakt account:</strong> <span class="js-manual-summary-display">{{if .Manual.DisplayName}}{{.Manual.DisplayName}}{{else if .Manual.SelectedUser}}{{.Manual.SelectedUser.TraktDisplayName}}{{else}}—{{end}}</span></p>
+              <p><strong>Webhook:</strong> <span class="js-manual-summary-webhook">{{if .Manual.WebhookURL}}{{.Manual.WebhookURL}}{{else}}—{{end}}</span></p>
+            </div>
+            <div class="wizard-actions">
+              <button type="button" class="button-primary js-manual-start">Update API token</button>
+            </div>
+          </div>
+
+          <div class="wizard-step" data-step-id="{{$manualStepThree.ID}}" data-state="{{$manualStepThree.State}}">
+            <h3 tabindex="-1">{{$manualStepThree.Title}}</h3>
+            {{with .Manual.Banner}}
+              <p>{{.Message}}</p>
+            {{else}}
+              <p>Results will appear here once you complete the manual renewal flow.</p>
+            {{end}}
+              {{if eq .Manual.Result "success"}}
+              <div class="copy-field">
+                <pre id="manual-webhook">{{.Manual.WebhookURL}}</pre>
+                <button type="button" class="button-secondary js-copy-webhook" data-copy-target="#manual-webhook">Copy webhook URL</button>
+              </div>
+              <div class="wizard-actions wizard-actions--center">
+                <button type="button" class="button-ghost js-reset-manual-success">Start Over</button>
+              </div>
+              {{if .Manual.DisplayNameMissing}}
+                <form class="manual-display-form js-manual-display-form" data-user-id="{{.Manual.SelectedID}}">
+                  <label for="manual-display-name">Trakt display name (optional)</label>
+                  <input id="manual-display-name" class="input-field js-manual-display-input" name="display_name" maxlength="50" value="{{.Manual.DisplayName}}" autocomplete="off">
+                  <p class="field-help">Add the Trakt account name so maintainers can distinguish duplicate Plex usernames.</p>
+                  <p class="field-error js-manual-display-error"></p>
+                  <p class="field-success js-manual-display-success"></p>
+                  <div class="wizard-actions">
+                    <button type="submit" class="button-secondary">Save display name</button>
+                  </div>
+                </form>
+              {{else}}
+                {{if .Manual.DisplayName}}
+                  <p><strong>Trakt account:</strong> {{.Manual.DisplayName}}</p>
+                {{end}}
+                {{if eq .Manual.DisplayNameWarning "truncated"}}
+                  <p class="field-warning">Trakt display name was truncated to 50 characters.</p>
+                {{end}}
+              {{end}}
+            {{end}}
+          </div>
+        {{else}}
+          <p class="empty-state">{{.Manual.EmptyMessage}}</p>
+        {{end}}
+      </section>
+    </div>
+
+    <script>
+      (function() {
+        var body = document.body;
+        var root = body.dataset.root || '';
+        var clientId = body.dataset.clientId || '';
+        var onboardingResult = (body.dataset.onboardingResult || '').toLowerCase();
+        var manualResult = (body.dataset.manualResult || '').toLowerCase();
+        var modeButtons = document.querySelectorAll('[data-mode-toggle]');
+        var sections = document.querySelectorAll('[data-mode-section]');
+        var onboardingForm = document.querySelector('.js-onboarding-form');
+        var onboardingInput = document.querySelector('.js-onboarding-username');
+        var onboardingError = document.querySelector('.js-onboarding-error');
+        var onboardingSummaryName = document.querySelector('.js-onboarding-summary-name');
+        var onboardingAuthButton = document.querySelector('.js-onboarding-start');
+        var onboardingAuthError = document.querySelector('.js-onboarding-auth-error');
+        var onboardingSteps = document.querySelectorAll('[data-mode-section="onboarding"] .wizard-step');
+        var onboardingProgress = document.querySelectorAll('[data-mode-section="onboarding"] .wizard-progress-item');
+        var manualSelect = document.querySelector('.js-renew-select');
+        var manualError = document.querySelector('.js-renew-error');
+        var manualContinue = document.querySelector('.js-manual-continue');
+        var manualStart = document.querySelector('.js-manual-start');
+        var manualSummaryName = document.querySelector('.js-manual-summary-name');
+        var manualSummaryDisplay = document.querySelector('.js-manual-summary-display');
+        var manualSummaryWebhook = document.querySelector('.js-manual-summary-webhook');
+        var manualDisplayForm = document.querySelector('.js-manual-display-form');
+        var manualDisplayInput = document.querySelector('.js-manual-display-input');
+        var manualDisplayError = document.querySelector('.js-manual-display-error');
+        var manualDisplaySuccess = document.querySelector('.js-manual-display-success');
+        var manualSteps = document.querySelectorAll('[data-mode-section="renew"] .wizard-step');
+        var manualProgress = document.querySelectorAll('[data-mode-section="renew"] .wizard-progress-item');
+        var copyButtons = document.querySelectorAll('.js-copy-webhook');
+        var hasManual = body.dataset.hasManual === 'true';
+        var maxDisplayNameLength = 50;
+
+        if (onboardingSummaryName && body.dataset.onboardingUsername) {
+          onboardingSummaryName.textContent = body.dataset.onboardingUsername;
+        }
+
+        function refreshOnboardingWizard() {
+          var result = (body.dataset.onboardingResult || '').toLowerCase();
+          var urlParams = new URLSearchParams(window.location.search);
+          var stepParam = (urlParams.get('step') || '').toLowerCase();
+          var modeParam = (urlParams.get('mode') || '').toLowerCase();
+          var target = 'username';
+          
+          // Only process onboarding steps if we're in onboarding mode
+          if (modeParam !== 'renew') {
+            // Check explicit step parameter first (from server redirect)
+            if (stepParam === 'webhook') {
+              target = 'webhook';
+            } else if (stepParam === 'authorize') {
+              target = 'authorize';
+            } else if (stepParam === 'username') {
+              target = 'username';
+            } else if (result === 'success') {
+              // Fallback: result-based logic
+              target = 'webhook';
+            } else if (result === 'error' || result === 'cancelled') {
+              target = 'authorize';
+            } else {
+              // Fallback: localStorage-based logic
+              var storedStep = localStorage.getItem('plaxtOnboardingStep');
+              if (storedStep === 'authorize') {
+                target = 'authorize';
+              }
+            }
+          }
+          setStepStates(onboardingSteps, onboardingProgress, target, 'onboarding');
+        }
+
+        function refreshManualWizard() {
+          var result = (body.dataset.manualResult || '').toLowerCase();
+          var urlParams = new URLSearchParams(window.location.search);
+          var stepParam = (urlParams.get('step') || '').toLowerCase();
+          var modeParam = (urlParams.get('mode') || '').toLowerCase();
+          var target = 'select';
+          
+          // Only process manual renewal steps if we're in renew mode
+          if (modeParam === 'renew') {
+            // Check explicit step parameter first (from server redirect)
+            if (stepParam === 'result') {
+              target = 'result';
+            } else if (stepParam === 'confirm') {
+              target = 'confirm';
+            } else if (stepParam === 'select') {
+              target = 'select';
+            } else if (result === 'success' || result === 'error' || result === 'cancelled') {
+              // Fallback: result-based logic
+              target = 'result';
+            } else {
+              // Fallback: localStorage-based logic
+              var storedManual = localStorage.getItem('plaxtManualStep');
+              if (storedManual === 'confirm' || storedManual === 'result') {
+                target = storedManual;
+              }
+            }
+          }
+          setStepStates(manualSteps, manualProgress, target, 'renew');
+          var resultStep = document.querySelector('[data-mode-section="renew"] .wizard-progress-item[data-step-id="result"]');
+          if (resultStep) {
+            if (result === 'success') {
+              resultStep.setAttribute('data-result', 'success');
+            } else if (result === 'error') {
+              resultStep.setAttribute('data-result', 'error');
+            } else {
+              resultStep.removeAttribute('data-result');
+            }
+          }
+        }
+
+        function setMode(mode) {
+          if (mode !== 'renew' || !hasManual) {
+            mode = 'onboarding';
+          }
+          body.dataset.mode = mode;
+          modeButtons.forEach(function(btn) {
+            var target = btn.getAttribute('data-mode-toggle');
+            btn.classList.toggle('is-active', target === mode);
+          });
+          sections.forEach(function(section) {
+            section.classList.toggle('mode-hidden', section.getAttribute('data-mode-section') !== mode);
+          });
+          localStorage.setItem('plaxtWizardMode', mode);
+          var url = new URL(window.location.href);
+          if (mode === 'renew' && hasManual) {
+            url.searchParams.set('mode', 'renew');
+          } else {
+            url.searchParams.delete('mode');
+          }
+          history.replaceState({}, '', url);
+          if (mode === 'renew') {
+            refreshManualWizard();
+          } else {
+            refreshOnboardingWizard();
+          }
+        }
+
+        function setStepStates(stepElements, progressElements, activeId, mode) {
+          var order = ['username', 'authorize', 'webhook'];
+          if (stepElements === manualSteps) {
+            order = ['select', 'confirm', 'result'];
+          }
+          order.forEach(function(stepId, idx) {
+            var state = 'future';
+            if (stepId === activeId) {
+              state = 'active';
+            } else {
+              var activeIndex = order.indexOf(activeId);
+              if (activeIndex !== -1 && idx < activeIndex) {
+                state = 'complete';
+              }
+            }
+            stepElements.forEach(function(step) {
+              if (step.getAttribute('data-step-id') === stepId) {
+                step.setAttribute('data-state', state);
+              }
+            });
+            progressElements.forEach(function(item) {
+              if (item.getAttribute('data-step-id') === stepId) {
+                item.setAttribute('data-state', state);
+              }
+            });
+          });
+          return activeId;
+        }
+
+        function resetOnboardingStateIfComplete() {
+          var urlParams = new URLSearchParams(window.location.search);
+          var urlMode = (urlParams.get('mode') || '').toLowerCase();
+          // Only reset state if we're actually in onboarding mode (not manual renewal)
+          if (body.dataset.onboardingResult && urlMode !== 'renew') {
+            localStorage.removeItem('plaxtOnboardingStep');
+            localStorage.removeItem('plaxtOnboardingUsername');
+            localStorage.removeItem('plaxtManualStep');
+            localStorage.removeItem('plaxtManualSelected');
+            localStorage.removeItem('plaxtManualSelectedName');
+            localStorage.removeItem('plaxtManualSelectedUsername');
+            localStorage.removeItem('plaxtManualSelectedDisplayName');
+            localStorage.setItem('plaxtWizardMode', 'onboarding');
+          }
+        }
+
+        function resetManualStateIfComplete() {
+          if (body.dataset.manualResult) {
+            localStorage.removeItem('plaxtManualStep');
+            localStorage.removeItem('plaxtManualSelected');
+            localStorage.removeItem('plaxtManualSelectedName');
+            localStorage.removeItem('plaxtManualSelectedUsername');
+            localStorage.removeItem('plaxtManualSelectedDisplayName');
+          }
+        }
+
+        function buildUserLabel(username, displayName) {
+          var trimmedUsername = (username || '').trim();
+          var trimmedDisplay = (displayName || '').trim();
+          if (!trimmedUsername && !trimmedDisplay) {
+            return '';
+          }
+          if (trimmedDisplay) {
+            return trimmedUsername + ' (' + trimmedDisplay + ')';
+          }
+          return trimmedUsername;
+        }
+
+        function startAuthorization(username, id, mode) {
+          var payload = {
+            mode: mode,
+            username: (username || '').trim()
+          };
+          if (mode === 'renew') {
+            payload.id = id || '';
+          }
+          return fetch('/oauth/state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          }).then(function(response) {
+            return response.json().catch(function() { return {}; }).then(function(data) {
+              if (!response.ok || !data.state) {
+                var message = (data && data.error) ? data.error : 'Unable to start authorization. Please try again.';
+                throw new Error(message);
+              }
+              var redirectPath = mode === 'renew' ? '/manual/authorize' : '/authorize';
+              var redirectUri = root + redirectPath;
+              var params = [
+                'client_id=' + encodeURIComponent(clientId),
+                'redirect_uri=' + encodeURIComponent(redirectUri),
+                'response_type=code',
+                'state=' + encodeURIComponent(data.state)
+              ];
+              return 'https://trakt.tv/oauth/authorize?' + params.join('&');
+            });
+          });
+        }
+
+        function updateURLForStep(step, extra) {
+          var url = new URL(window.location.href);
+          if (step) {
+            url.searchParams.set('step', step);
+          } else {
+            url.searchParams.delete('step');
+          }
+          if (extra && extra.id) {
+            url.searchParams.set('id', extra.id);
+          }
+          if (extra && extra.username) {
+            url.searchParams.set('username', extra.username);
+          }
+          if (extra && extra.mode) {
+            url.searchParams.set('mode', extra.mode);
+          }
+          if (!extra || !extra.result) {
+            url.searchParams.delete('result');
+            url.searchParams.delete('error');
+          }
+          history.replaceState({}, '', url);
+        }
+
+        modeButtons.forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            setMode(btn.getAttribute('data-mode-toggle'));
+          });
+        });
+
+        if (onboardingForm) {
+          onboardingForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            var rawUsername = '';
+            if (onboardingInput) {
+              rawUsername = onboardingInput.value.trim();
+            }
+            var normalizedUsername = rawUsername.toLowerCase();
+            if (!normalizedUsername) {
+              onboardingError.textContent = 'Please enter your Plex username.';
+              onboardingInput && onboardingInput.focus();
+              return;
+            }
+            onboardingError.textContent = '';
+            if (onboardingAuthError) {
+              onboardingAuthError.textContent = '';
+            }
+            body.dataset.onboardingUsername = rawUsername;
+            if (onboardingSummaryName) {
+              onboardingSummaryName.textContent = rawUsername;
+            }
+            localStorage.setItem('plaxtOnboardingStep', 'authorize');
+            localStorage.setItem('plaxtOnboardingUsername', normalizedUsername);
+            updateURLForStep('authorize', { username: normalizedUsername, mode: 'onboarding' });
+            setStepStates(onboardingSteps, onboardingProgress, 'authorize', 'onboarding');
+            setMode('onboarding');
+            if (onboardingAuthButton) {
+              onboardingAuthButton.focus();
+            }
+          });
+        }
+
+        if (onboardingAuthButton) {
+          onboardingAuthButton.addEventListener('click', function() {
+            var storedUsername = (body.dataset.onboardingUsername || '').trim();
+            if (!storedUsername && onboardingInput) {
+              storedUsername = onboardingInput.value.trim();
+            }
+            if (!storedUsername) {
+              if (onboardingAuthError) {
+                onboardingAuthError.textContent = 'Please enter your Plex username first.';
+              }
+              setStepStates(onboardingSteps, onboardingProgress, 'username', 'onboarding');
+              if (onboardingInput) {
+                onboardingInput.focus();
+              }
+              return;
+            }
+            var normalizedUsername = storedUsername.toLowerCase();
+            if (onboardingAuthError) {
+              onboardingAuthError.textContent = '';
+            }
+            localStorage.setItem('plaxtOnboardingStep', 'authorize');
+            localStorage.setItem('plaxtOnboardingUsername', normalizedUsername);
+            updateURLForStep('authorize', { username: normalizedUsername, mode: 'onboarding' });
+            setStepStates(onboardingSteps, onboardingProgress, 'authorize', 'onboarding');
+            startAuthorization(normalizedUsername, '', 'onboarding')
+              .then(function(authUrl) {
+                window.location = authUrl;
+              })
+              .catch(function(error) {
+                if (onboardingAuthError) {
+                  onboardingAuthError.textContent = error.message || 'Unable to contact Trakt. Please try again.';
+                }
+                setStepStates(onboardingSteps, onboardingProgress, 'authorize', 'onboarding');
+              });
+          });
+        }
+
+        if (manualContinue && manualSelect) {
+          manualContinue.addEventListener('click', function(event) {
+            event.preventDefault();
+            var option = manualSelect.options[manualSelect.selectedIndex];
+            if (!option || !option.value) {
+              manualError.textContent = 'Choose a user before continuing.';
+              manualSelect.focus();
+              return;
+            }
+            manualError.textContent = '';
+            var username = (option.getAttribute('data-username') || '').trim();
+            var traktName = option.getAttribute('data-display-name') || '';
+            var label = buildUserLabel(username, traktName);
+            var usernameKey = username.toLowerCase();
+            var webhook = option.getAttribute('data-webhook') || '';
+            if (manualSummaryName) {
+              manualSummaryName.textContent = label || '—';
+            }
+            if (manualSummaryDisplay) {
+              manualSummaryDisplay.textContent = traktName.trim() || '—';
+            }
+            if (manualSummaryWebhook) {
+              manualSummaryWebhook.textContent = webhook || '—';
+            }
+            localStorage.setItem('plaxtManualStep', 'confirm');
+            localStorage.setItem('plaxtManualSelected', option.value);
+            localStorage.setItem('plaxtManualSelectedUsername', username);
+            localStorage.setItem('plaxtManualSelectedDisplayName', traktName);
+            localStorage.removeItem('plaxtManualSelectedName');
+            setStepStates(manualSteps, manualProgress, 'confirm', 'renew');
+            setMode('renew');
+            updateURLForStep('', { mode: 'renew', id: option.value, username: usernameKey });
+          });
+        }
+
+        if (manualStart && manualSelect) {
+          manualStart.addEventListener('click', function() {
+            var option = manualSelect.options[manualSelect.selectedIndex];
+            if (!option || !option.value) {
+              manualError.textContent = 'Choose a user before continuing.';
+              manualSelect.focus();
+              return;
+            }
+            manualError.textContent = '';
+            var username = localStorage.getItem('plaxtManualSelectedUsername') || option.getAttribute('data-username') || '';
+            var traktName = localStorage.getItem('plaxtManualSelectedDisplayName') || option.getAttribute('data-display-name') || '';
+            var label = buildUserLabel(username, traktName);
+            var usernameKey = (username || '').toLowerCase();
+            var selectedId = option.value;
+            if (manualSummaryName) {
+              manualSummaryName.textContent = label || '—';
+            }
+            if (manualSummaryDisplay) {
+              manualSummaryDisplay.textContent = (traktName || '').trim() || '—';
+            }
+            setStepStates(manualSteps, manualProgress, 'result', 'renew');
+            startAuthorization(usernameKey, selectedId, 'renew')
+              .then(function(authUrl) {
+                localStorage.setItem('plaxtManualStep', 'result');
+                localStorage.setItem('plaxtManualSelectedUsername', username);
+                localStorage.setItem('plaxtManualSelectedDisplayName', traktName);
+                updateURLForStep('', { mode: 'renew', id: selectedId, username: usernameKey });
+                window.location = authUrl;
+              })
+              .catch(function(error) {
+                manualError.textContent = error.message || 'Unable to contact Trakt. Please try again.';
+                setStepStates(manualSteps, manualProgress, 'confirm', 'renew');
+              });
+          });
+        }
+
+        if (manualDisplayForm && manualDisplayInput) {
+          manualDisplayForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            if (manualDisplayError) {
+              manualDisplayError.textContent = '';
+            }
+            if (manualDisplaySuccess) {
+              manualDisplaySuccess.textContent = '';
+            }
+            var value = manualDisplayInput.value.trim();
+            if (value.length > maxDisplayNameLength) {
+              manualDisplayError && (manualDisplayError.textContent = 'Display name must be 50 characters or fewer.');
+              manualDisplayInput.focus();
+              return;
+            }
+            var userId = manualDisplayForm.getAttribute('data-user-id') || '';
+            if (!userId) {
+              manualDisplayError && (manualDisplayError.textContent = 'Missing user identifier. Refresh and try again.');
+              return;
+            }
+            var payload = { display_name: value };
+            fetch('/users/' + encodeURIComponent(userId) + '/trakt-display-name', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            }).then(function(response) {
+              if (!response.ok) {
+                return response.text().then(function(text) {
+                  throw new Error(text || 'Unable to save display name.');
+                });
+              }
+              return response.json();
+            }).then(function(data) {
+              var savedName = (data && data.display_name) ? data.display_name.trim() : '';
+              var storedUsername = localStorage.getItem('plaxtManualSelectedUsername') || '';
+              if (!storedUsername && manualSelect) {
+                var selectedOption = manualSelect.options[manualSelect.selectedIndex];
+                if (selectedOption) {
+                  storedUsername = selectedOption.getAttribute('data-username') || '';
+                }
+              }
+              var label = buildUserLabel(storedUsername, savedName);
+              if (manualSummaryDisplay) {
+                manualSummaryDisplay.textContent = savedName || '—';
+              }
+              if (manualSummaryName && label) {
+                manualSummaryName.textContent = label;
+              }
+              localStorage.setItem('plaxtManualSelectedDisplayName', savedName);
+              if (storedUsername) {
+                localStorage.setItem('plaxtManualSelectedUsername', storedUsername);
+              }
+              manualDisplayInput.value = savedName;
+              body.dataset.manualDisplayName = savedName;
+              body.dataset.manualDisplayMissing = savedName ? 'false' : 'true';
+              var successMessage = savedName ? 'Display name saved.' : 'Display name cleared.';
+              if (data && data.truncated) {
+                successMessage = 'Display name saved (truncated to 50 characters).';
+                body.dataset.manualDisplayWarning = 'truncated';
+              } else {
+                body.dataset.manualDisplayWarning = '';
+              }
+              manualDisplaySuccess && (manualDisplaySuccess.textContent = successMessage);
+              if (savedName) {
+                var readonly = manualDisplayForm.parentNode.querySelector('.js-manual-display-readonly');
+                if (!readonly) {
+                  readonly = document.createElement('p');
+                  readonly.className = 'js-manual-display-readonly';
+                  manualDisplayForm.parentNode.appendChild(readonly);
+                }
+                readonly.innerHTML = '<strong>Trakt account:</strong> ' + savedName;
+                manualDisplayForm.style.display = 'none';
+              } else {
+                var existing = manualDisplayForm.parentNode.querySelector('.js-manual-display-readonly');
+                if (existing && existing.parentNode) {
+                  existing.parentNode.removeChild(existing);
+                }
+                manualDisplayForm.style.display = '';
+              }
+            }).catch(function(error) {
+              manualDisplayError && (manualDisplayError.textContent = error.message || 'Unable to save display name.');
+            });
+          });
+        }
+
+        copyButtons.forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            var targetSelector = btn.getAttribute('data-copy-target');
+            if (!targetSelector) {
+              return;
+            }
+            var target = document.querySelector(targetSelector);
+            if (!target) {
+              return;
+            }
+            var text = target.textContent.trim();
+            if (!navigator.clipboard) {
+              try {
+                var textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+              } catch (err) {
+                return;
+              }
+            } else {
+              navigator.clipboard.writeText(text).catch(function() {});
+            }
+            btn.textContent = 'Copied!';
+            setTimeout(function() { btn.textContent = 'Copy webhook URL'; }, 2000);
+          });
+        });
+
+        // Restore persisted state when returning without result
+        if (!body.dataset.manualResult) {
+          var storedManual = localStorage.getItem('plaxtManualStep');
+          var storedSelected = localStorage.getItem('plaxtManualSelected');
+          var storedUsername = localStorage.getItem('plaxtManualSelectedUsername') || localStorage.getItem('plaxtManualSelectedName');
+          var storedDisplay = localStorage.getItem('plaxtManualSelectedDisplayName') || '';
+          if (storedSelected && manualSelect) {
+            Array.prototype.forEach.call(manualSelect.options, function(option) {
+              if (option.value === storedSelected) {
+                option.selected = true;
+              }
+            });
+          }
+          if (storedManual === 'confirm') {
+            var label = buildUserLabel(storedUsername || '', storedDisplay || '');
+            if (manualSummaryName && label) {
+              manualSummaryName.textContent = label;
+            }
+            if (manualSummaryDisplay && storedDisplay) {
+              manualSummaryDisplay.textContent = storedDisplay;
+            }
+          }
+        }
+
+        refreshOnboardingWizard();
+        refreshManualWizard();
+
+        // Initialise mode - prioritize URL/server mode, then results, then localStorage
+        var urlParams = new URLSearchParams(window.location.search);
+        var urlMode = (urlParams.get('mode') || '').toLowerCase();
+        var initialMode = body.dataset.mode || 'onboarding';
+        var storedMode = localStorage.getItem('plaxtWizardMode');
+        
+        // If URL explicitly has mode=renew and there's a manual result, use renew mode
+        if (urlMode === 'renew' && manualResult && hasManual) {
+          initialMode = 'renew';
+        } else if (urlMode === 'renew' && hasManual) {
+          // URL says renew and we have manual users available
+          initialMode = 'renew';
+        } else if (onboardingResult) {
+          // If there's an onboarding result, force onboarding mode
+          initialMode = 'onboarding';
+        } else if (manualResult && hasManual) {
+          // If there's a manual result (without URL mode), force manual renewal mode
+          initialMode = 'renew';
+        } else if (storedMode && storedMode === 'renew' && hasManual) {
+          // Otherwise use stored mode if available
+          initialMode = storedMode;
+        }
+        setMode(initialMode);
+
+
+        resetOnboardingStateIfComplete();
+        resetManualStateIfComplete();
+
+        // "Start Over" button for manual renewal reset
+        var resetButton = document.querySelector('.js-reset-manual');
+        if (resetButton) {
+          resetButton.addEventListener('click', function() {
+            // Clear local storage
+            localStorage.removeItem('plaxtManualStep');
+            localStorage.removeItem('plaxtManualSelected');
+            localStorage.removeItem('plaxtManualSelectedName');
+            localStorage.removeItem('plaxtManualSelectedUsername');
+            localStorage.removeItem('plaxtManualSelectedDisplayName');
+
+            // Reset URL to manual renewal mode without any result params
+            var url = new URL(window.location.href);
+            url.searchParams.set('mode', 'renew');
+            url.searchParams.delete('result');
+            url.searchParams.delete('error');
+            url.searchParams.delete('step');
+            url.searchParams.delete('correlation_id');
+            url.searchParams.delete('id');
+            url.searchParams.delete('username');
+            url.searchParams.delete('display_name');
+            url.searchParams.delete('display_name_missing');
+            url.searchParams.delete('display_name_warning');
+
+            // Navigate to clean state
+            window.location.href = url.toString();
+          });
+        }
+
+        var resetSuccessButtons = document.querySelectorAll('.js-reset-manual-success');
+        resetSuccessButtons.forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            localStorage.removeItem('plaxtManualStep');
+            localStorage.removeItem('plaxtManualSelected');
+            localStorage.removeItem('plaxtManualSelectedName');
+            localStorage.removeItem('plaxtManualSelectedUsername');
+            localStorage.removeItem('plaxtManualSelectedDisplayName');
+
+            var url = new URL(window.location.href);
+            url.searchParams.set('mode', 'renew');
+            url.searchParams.delete('result');
+            url.searchParams.delete('error');
+            url.searchParams.delete('step');
+            url.searchParams.delete('correlation_id');
+            url.searchParams.delete('id');
+            url.searchParams.delete('username');
+            url.searchParams.delete('display_name');
+            url.searchParams.delete('display_name_missing');
+            url.searchParams.delete('display_name_warning');
+
+            window.location.href = url.toString();
+          });
+        });
+
+        // Onboarding reset control
+        var onboardingResetButton = document.querySelector('.js-reset-onboarding');
+        if (onboardingResetButton) {
+          onboardingResetButton.addEventListener('click', function() {
+            localStorage.removeItem('plaxtOnboardingStep');
+            localStorage.removeItem('plaxtOnboardingUsername');
+            localStorage.setItem('plaxtWizardMode', 'onboarding');
+
+            var url = new URL(window.location.href);
+            url.searchParams.delete('result');
+            url.searchParams.delete('error');
+            url.searchParams.delete('step');
+            url.searchParams.delete('username');
+            url.searchParams.delete('id');
+            url.searchParams.delete('mode');
+            window.location.href = url.toString();
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>

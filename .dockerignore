@@ -1,0 +1,72 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# CI/CD
+.circleci
+.github
+
+# Docker files
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+
+# Build artifacts
+goplaxt
+goplaxt-docker
+plaxt-test
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Runtime data
+keystore/
+run.sh
+
+# Dependencies (go.mod and go.sum are needed)
+vendor/
+
+# Go build cache
+.gocache/
+.gomodcache/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.envrc
+*.local
+.env.example
+
+# AI assistant files
+.claude/
+.codex/
+.cursor/
+.aider*
+.specify/
+AGENTS.md
+CLAUDE.md
+specs/
+
+# Documentation (optional - remove if you want docs in image)
+README.md
+LICENSE
+.goreleaser.yml
+
+# Logs
+*.log
+
+# Tests (if you don't run tests in Docker)
+main_test.go
+*_test.go

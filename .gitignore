@@ -1,0 +1,48 @@
+# Build artifacts
+goplaxt
+goplaxt-docker
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+plaxt-test
+
+# Runtime data
+keystore/
+run.sh
+
+# Dependencies
+vendor/
+
+# Go build cache
+.gocache/
+.gomodcache/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.envrc
+*.local
+
+# AI assistant files
+.claude/
+.codex/
+.cursor/
+.aider*
+.specify/
+AGENTS.md
+CLAUDE.md
+specs/
+
+# Logs
+*.log
