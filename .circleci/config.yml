@@ -13,8 +13,7 @@ executors:
 
   docker-builder:
     machine:
-      image: ubuntu-2204:2023.07.1
-    resource_class: medium
+      image: ubuntu-2204:current
     environment:
       DOCKER_BUILDKIT: 1
 
