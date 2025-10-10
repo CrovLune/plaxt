@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 
-ARG GO_VERSION=1.12.17
+ARG GO_VERSION=1.24.0
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /src
@@ -12,8 +12,7 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
 
-ENV CGO_ENABLED=0 \
-    GO111MODULE=on
+ENV CGO_ENABLED=0
 
 RUN apk add --no-cache git ca-certificates tzdata && update-ca-certificates
 

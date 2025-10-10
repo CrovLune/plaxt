@@ -96,6 +96,20 @@ func TestAllowedHostsHandler_alwaysAllowHealthcheck(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Result().StatusCode)
 }
 
+func TestAllowedHostsHandler_allowsRequestWithPortWhenAllowedHasNoPort(t *testing.T) {
+	f := allowedHostsHandler("foo.bar")
+
+	rr := httptest.NewRecorder()
+	r, err := http.NewRequest("GET", "/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Host = "foo.bar:443"
+
+	f(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).ServeHTTP(rr, r)
+	assert.Equal(t, http.StatusOK, rr.Result().StatusCode)
+}
+
 type MockSuccessStore struct{}
 
 func (s MockSuccessStore) Ping(ctx context.Context) error            { return nil }

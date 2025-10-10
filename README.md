@@ -6,7 +6,7 @@
   Sync Plex activity to Trakt with a guided, username-free experience.
 </p>
 <p align="center">
-  <a href="https://circleci.com/gh/XanderStrike/goplaxt"><img src="https://circleci.com/gh/XanderStrike/goplaxt.svg?style=shield" alt="CircleCI" /></a>
+  <a href="https://dl.circleci.com/status-badge/redirect/gh/CrovLune/plaxt/tree/main"><img src="https://dl.circleci.com/status-badge/img/gh/CrovLune/plaxt/tree/main.svg?style=shield" alt="CircleCI" /></a>
   <img src="https://img.shields.io/docker/pulls/crovlune/plaxt.svg" alt="Docker Pulls" />
 </p>
 
@@ -114,9 +114,10 @@ Browse to `http://localhost:8000` and follow the wizard.
 
 ### Local workflow
 
-- Install Go 1.12 (matching the project toolchain) and enable modules: `export GO111MODULE=on`.
+- Install Go 1.24+ (module-aware toolchain).
 - Format code: `gofmt -w <files>` (or run `find . -name '*.go' -exec gofmt -w {} \;`).
 - Run tests: `go test ./...`.
+- Upgrade deps: `go get -u ./... && go mod tidy`.
 
 Static assets live under `static/` and are served directly by the Go binary—no additional build steps required.
 

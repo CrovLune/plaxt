@@ -1,8 +1,8 @@
 package store
 
 import (
-	"fmt"
-	"os"
+	"crypto/rand"
+	"encoding/hex"
 	"time"
 
 	"crovlune/plaxt/lib/common"
@@ -23,17 +23,20 @@ type User struct {
 	store            store
 }
 
+// uuid returns a random UUIDv4 string.
 func uuid() string {
-	f, _ := os.OpenFile("/dev/urandom", os.O_RDONLY, 0)
 	b := make([]byte, 16)
-	f.Read(b)
-	f.Close()
-	uuid := fmt.Sprintf("%x%x%x%x%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
-
-	return uuid
+	if _, err := rand.Read(b); err != nil {
+		// extremely unlikely; fall back to timestamp-based hex
+		return hex.EncodeToString([]byte(time.Now().Format("20060102150405.000000000")))
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return hex.EncodeToString(b)
 }
 
-// NewUser creates a new user object
+// NewUser creates and persists a new user object with the given tokens.
+// If displayName is provided, it is normalized and truncated to the allowed length.
 func NewUser(username, accessToken, refreshToken string, displayName *string, store store) User {
 	id := uuid()
 	var normalizedName string
@@ -53,7 +56,8 @@ func NewUser(username, accessToken, refreshToken string, displayName *string, st
 	return user
 }
 
-// UpdateUser updates an existing user object
+// UpdateUser updates the tokens of an existing user. If displayName is provided,
+// it replaces the stored Trakt display name (after normalization/truncation).
 func (user *User) UpdateUser(accessToken, refreshToken string, displayName *string) {
 	user.AccessToken = accessToken
 	user.RefreshToken = refreshToken
@@ -67,6 +71,7 @@ func (user *User) UpdateUser(accessToken, refreshToken string, displayName *stri
 }
 
 // UpdateDisplayName updates only the Trakt display name, leaving tokens untouched.
+// Returns true if the provided name was truncated.
 func (user *User) UpdateDisplayName(displayName *string) bool {
 	truncated := false
 	if displayName != nil {

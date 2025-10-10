@@ -7,8 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -34,6 +33,8 @@ const (
 	actionStop  = "stop"
 )
 
+// New constructs a Trakt client with sane defaults (10s timeout) and a
+// concurrency lock to prevent duplicate scrobble processing.
 func New(clientId, clientSecret string, storage store.Store) *Trakt {
 	return &Trakt{
 		ClientId:     clientId,
@@ -71,14 +72,14 @@ func (t *Trakt) FetchDisplayName(ctx context.Context, accessToken string) (strin
 	req.Header.Set("trakt-api-version", "2")
 	req.Header.Set("trakt-api-key", t.ClientId)
 
-	resp, err := t.httpClient.Do(req)
+resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return "", false, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		bodySummary := strings.TrimSpace(string(body))
 		if bodySummary == "" {
 			bodySummary = resp.Status
@@ -113,17 +114,24 @@ func (t *Trakt) AuthRequest(redirectURI, username, code, refreshToken, grantType
 		"redirect_uri":  redirectURI,
 		"grant_type":    grantType,
 	}
-	jsonValue, _ := json.Marshal(values)
+	jsonValue, err := json.Marshal(values)
+	if err != nil {
+		slog.Error("trakt oauth marshal error", "error", err)
+		return map[string]interface{}{"error": "marshal_error", "error_description": err.Error()}, false
+	}
 
 	resp, err := t.httpClient.Post("https://api.trakt.tv/oauth/token", "application/json", bytes.NewBuffer(jsonValue))
-	handleErr(err)
+	if err != nil {
+		slog.Error("trakt oauth request error", "error", err)
+		return map[string]interface{}{"error": "http_error", "error_description": err.Error()}, false
+	}
 	defer resp.Body.Close()
 
 	var result map[string]interface{}
 
 	if resp.StatusCode != http.StatusOK {
 		// Read error response body for detailed error information
-		bodyBytes, readErr := ioutil.ReadAll(resp.Body)
+		bodyBytes, readErr := io.ReadAll(resp.Body)
 		errorDetail := "Unknown error"
 		errorDescription := ""
 
@@ -143,8 +151,7 @@ func (t *Trakt) AuthRequest(redirectURI, username, code, refreshToken, grantType
 			}
 		}
 
-		log.Printf("Trakt OAuth error: HTTP %d (%s) - error=%s, description=%s",
-			resp.StatusCode, resp.Status, errorDetail, errorDescription)
+		slog.Error("trakt oauth error", "http_status", resp.StatusCode, "http_status_text", resp.Status, "error", errorDetail, "error_description", errorDescription)
 
 		// Include error details in result for caller to use
 		result = map[string]interface{}{
@@ -156,8 +163,10 @@ func (t *Trakt) AuthRequest(redirectURI, username, code, refreshToken, grantType
 		return result, false
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(&result)
-	handleErr(err)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		slog.Error("trakt oauth decode error", "error", err)
+		return map[string]interface{}{"error": "decode_error", "error_description": err.Error()}, false
+	}
 
 	return result, true
 }
@@ -165,13 +174,14 @@ func (t *Trakt) AuthRequest(redirectURI, username, code, refreshToken, grantType
 // Handle determine if an item is a show or a movie
 func (t *Trakt) Handle(hook *plexhooks.Webhook, user store.User) {
 	if hook == nil {
-		log.Print("Webhook payload missing")
+		slog.Error("webhook missing payload")
 		return
 	}
 	if hook.Player.UUID == "" || hook.Metadata.RatingKey == "" {
-		log.Printf("Event %s ignored", hook.Event)
+		slog.Warn("webhook ignored: missing fields", "event", hook.Event)
 		return
 	}
+
 	lockKey := fmt.Sprintf("%s:%s", hook.Player.UUID, hook.Metadata.RatingKey)
 	t.ml.Lock(lockKey)
 	defer t.ml.Unlock(lockKey)
@@ -179,13 +189,12 @@ func (t *Trakt) Handle(hook *plexhooks.Webhook, user store.User) {
 	event, cache, progress := t.getAction(hook)
 	itemChanged := true
 	if event == "" {
-		log.Printf("Event %s ignored", hook.Event)
+		slog.Info("webhook ignored: no action", "event", hook.Event)
 		return
 	} else if cache.ServerUuid == hook.Server.UUID {
 		itemChanged = false
-		if cache.LastAction == actionStop ||
-			(cache.LastAction == event && progress == cache.Body.Progress) {
-			log.Print("Event already scrobbled")
+		if cache.LastAction == actionStop || (cache.LastAction == event && progress == cache.Body.Progress) {
+			slog.Info("webhook duplicate event ignored", "username", user.Username, "plaxt_id", user.ID, "event", hook.Event)
 			return
 		}
 	}
@@ -196,17 +205,17 @@ func (t *Trakt) Handle(hook *plexhooks.Webhook, user store.User) {
 		case "show":
 			body = t.handleShow(hook)
 			if body == nil {
-				log.Print("Cannot find episode")
+				slog.Warn("episode not found")
 				return
 			}
 		case "movie":
 			body = t.handleMovie(hook)
 			if body == nil {
-				log.Print("Cannot find movie")
+				slog.Warn("movie not found")
 				return
 			}
 		default:
-			log.Print("Event ignored")
+			slog.Info("webhook ignored: unsupported library section type")
 			return
 		}
 		cache.Body = *body
@@ -217,7 +226,14 @@ func (t *Trakt) Handle(hook *plexhooks.Webhook, user store.User) {
 	cache.RatingKey = hook.Metadata.RatingKey
 	cache.Trigger = hook.Event
 	cache.Body.Progress = progress
-	t.scrobbleRequest(event, cache, user.AccessToken)
+	// Log intent with best-effort media description based on hook metadata
+	mediaHint := hook.Metadata.Title
+	if strings.ToLower(hook.Metadata.Type) == "episode" && hook.Metadata.GrandparentTitle != "" {
+		mediaHint = fmt.Sprintf("%s - S%02dE%02d %s", hook.Metadata.GrandparentTitle, hook.Metadata.ParentIndex, hook.Metadata.Index, hook.Metadata.Title)
+	}
+	finished := event == actionStop && progress >= ProgressThreshold
+		slog.Info("webhook handle", "username", user.Username, "plaxt_id", user.ID, "action", event, "media", mediaHint, "progress", progress, "finished", finished)
+	t.scrobbleRequest(event, cache, user)
 }
 
 func (t *Trakt) handleShow(hook *plexhooks.Webhook) *common.ScrobbleBody {
@@ -303,7 +319,7 @@ var episodeRegex = regexp.MustCompile(`([0-9]+)/([0-9]+)/([0-9]+)`)
 func (t *Trakt) findEpisode(hook *plexhooks.Webhook) *common.ScrobbleBody {
 	u, err := url.Parse(hook.Metadata.GUID)
 	if err != nil {
-		log.Printf("Invalid guid: %s", hook.Metadata.GUID)
+		slog.Warn("invalid guid", "guid", hook.Metadata.GUID)
 		return nil
 	}
 	var srv string
@@ -317,12 +333,12 @@ func (t *Trakt) findEpisode(hook *plexhooks.Webhook) *common.ScrobbleBody {
 		}
 	}
 	if srv == "" {
-		log.Printf("Unidentified guid: %s", hook.Metadata.GUID)
+		slog.Warn("unidentified guid", "guid", hook.Metadata.GUID)
 		return nil
 	}
 	showID := episodeRegex.FindStringSubmatch(hook.Metadata.GUID)
 	if showID == nil {
-		log.Printf("Unmatched guid: %s", hook.Metadata.GUID)
+		slog.Warn("unmatched guid", "guid", hook.Metadata.GUID)
 		return nil
 	}
 	show := common.Show{}
@@ -356,62 +372,76 @@ func (t *Trakt) findMovie(hook *plexhooks.Webhook) *common.ScrobbleBody {
 	}
 }
 
-func (t *Trakt) makeRequest(url string) []map[string]interface{} {
+func (t *Trakt) makeRequest(url string) ([]map[string]interface{}, error) {
 	req, err := http.NewRequest("GET", url, nil)
-	handleErr(err)
+	if err != nil { return nil, err }
 
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("trakt-api-version", "2")
 	req.Header.Add("trakt-api-key", t.ClientId)
 
 	resp, err := t.httpClient.Do(req)
-	handleErr(err)
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	if err != nil { return nil, err }
+	defer resp.Body.Close()
 
-	respBody, err := ioutil.ReadAll(resp.Body)
-	handleErr(err)
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("trakt GET %s: %s", url, strings.TrimSpace(string(b)))
+	}
 
 	var results []map[string]interface{}
-	err = json.Unmarshal(respBody, &results)
-	handleErr(err)
-
-	return results
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
-func (t *Trakt) scrobbleRequest(action string, item common.CacheItem, accessToken string) {
+func (t *Trakt) scrobbleRequest(action string, item common.CacheItem, user store.User) {
 	URL := fmt.Sprintf("https://api.trakt.tv/scrobble/%s", action)
 
 	body, _ := json.Marshal(item.Body)
 	req, err := http.NewRequest("POST", URL, bytes.NewBuffer(body))
-	handleErr(err)
+	if err != nil {
+		slog.Error("scrobble build request error", "username", user.Username, "plaxt_id", user.ID, "action", action, "error", err)
+		return
+	}
 
 	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", accessToken))
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", user.AccessToken))
 	req.Header.Add("trakt-api-version", "2")
 	req.Header.Add("trakt-api-key", t.ClientId)
 
-	resp, _ := t.httpClient.Do(req)
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		slog.Error("scrobble http error", "username", user.Username, "plaxt_id", user.ID, "action", action, "error", err)
+		return
+	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
 		item.LastAction = action
-		respBody, _ := ioutil.ReadAll(resp.Body)
-		_ = json.Unmarshal(respBody, &item.Body)
-		t.storage.WriteScrobbleBody(item)
-		switch action {
-		case actionStart:
-			log.Printf("%s started (triggered by: %s)", item.Body, item.Trigger)
-		case actionPause:
-			log.Printf("%s paused (triggered by: %s)", item.Body, item.Trigger)
-		case actionStop:
-			log.Printf("%s stopped (triggered by: %s)", item.Body, item.Trigger)
+		if err := json.NewDecoder(resp.Body).Decode(&item.Body); err != nil {
+			slog.Error("scrobble decode error", "username", user.Username, "plaxt_id", user.ID, "action", action, "error", err)
+			return
 		}
+		t.storage.WriteScrobbleBody(item)
+		// Compose human-friendly media label from returned body
+		media := "unknown"
+		if item.Body.Movie != nil && item.Body.Movie.Title != nil && item.Body.Movie.Year != nil {
+			media = fmt.Sprintf("%s (%d)", *item.Body.Movie.Title, *item.Body.Movie.Year)
+		} else if item.Body.Show != nil {
+			title := "Unknown Show"
+			if item.Body.Show.Title != nil { title = *item.Body.Show.Title }
+			if item.Body.Episode != nil && item.Body.Episode.Season != nil && item.Body.Episode.Number != nil {
+				media = fmt.Sprintf("%s - S%02dE%02d", title, *item.Body.Episode.Season, *item.Body.Episode.Number)
+			} else {
+				media = title
+			}
+		}
+		finished := action == actionStop && item.Body.Progress >= ProgressThreshold
+		slog.Info("scrobble success", "username", user.Username, "plaxt_id", user.ID, "action", action, "media", media, "progress", item.Body.Progress, "finished", finished, "trigger", item.Trigger)
 	} else {
-		log.Printf("%s failed (triggered by: %s, status code: %d)", string(body), item.Trigger, resp.StatusCode)
+		slog.Error("scrobble failure", "username", user.Username, "plaxt_id", user.ID, "action", action, "status", resp.StatusCode, "trigger", item.Trigger)
 	}
 }
 
@@ -440,11 +470,6 @@ func (t *Trakt) getAction(hook *plexhooks.Webhook) (action string, item common.C
 	return
 }
 
-func handleErr(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
 
 func (e HttpError) Error() string {
 	return e.Message

@@ -8,21 +8,25 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io/ioutil"
-	"log"
+	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"crovlune/plaxt/lib/config"
+	"crovlune/plaxt/lib/logging"
 	"crovlune/plaxt/lib/store"
 	"crovlune/plaxt/lib/trakt"
 	"crovlune/plaxt/plexhooks"
+
 	"github.com/etherlabsio/healthcheck"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
@@ -30,12 +34,13 @@ import (
 )
 
 var (
-	version  string
-	commit   string
-	date     string
-	storage  store.Store
-	apiSf    *singleflight.Group
-	traktSrv *trakt.Trakt
+	version    string
+	commit     string
+	date       string
+	storage    store.Store
+	apiSf      *singleflight.Group
+	traktSrv   *trakt.Trakt
+	trustProxy bool = true
 )
 
 var errUsernameMismatch = errors.New("manual renewal username mismatch")
@@ -197,6 +202,8 @@ func truncateCorrelationID(fullID string) string {
 	return fullID[:8]
 }
 
+// SelfRoot determines our external root URL (scheme://host[:port]) taking into account
+// trusted proxy headers if enabled via TRUST_PROXY.
 func SelfRoot(r *http.Request) string {
 	firstForwardVal := func(raw string) string {
 		if raw == "" {
@@ -250,22 +257,22 @@ func SelfRoot(r *http.Request) string {
 	scheme := strings.TrimSpace(r.URL.Scheme)
 	host := strings.TrimSpace(r.Host)
 
-	if forwardedHost, forwardedProto := parseForwarded(r.Header.Get("Forwarded")); forwardedHost != "" || forwardedProto != "" {
-		if forwardedHost != "" {
-			host = forwardedHost
+	if trustProxy {
+		if forwardedHost, forwardedProto := parseForwarded(r.Header.Get("Forwarded")); forwardedHost != "" || forwardedProto != "" {
+			if forwardedHost != "" {
+				host = forwardedHost
+			}
+			if forwardedProto != "" {
+				scheme = forwardedProto
+			}
 		}
-		if forwardedProto != "" {
-			scheme = forwardedProto
+		if xfHost := firstForwardVal(r.Header.Get("X-Forwarded-Host")); xfHost != "" {
+			host = xfHost
 		}
-	}
-
-	if xfHost := firstForwardVal(r.Header.Get("X-Forwarded-Host")); xfHost != "" {
-		host = xfHost
-	}
-
-	if scheme == "" {
-		if xfProto := firstForwardVal(r.Header.Get("X-Forwarded-Proto")); xfProto != "" {
-			scheme = strings.ToLower(xfProto)
+		if scheme == "" {
+			if xfProto := firstForwardVal(r.Header.Get("X-Forwarded-Proto")); xfProto != "" {
+				scheme = strings.ToLower(xfProto)
+			}
 		}
 	}
 
@@ -283,7 +290,7 @@ func SelfRoot(r *http.Request) string {
 		host = "localhost"
 	}
 
-	if !strings.Contains(host, ":") {
+	if trustProxy && !strings.Contains(host, ":") {
 		if xfPort := firstForwardVal(r.Header.Get("X-Forwarded-Port")); xfPort != "" {
 			switch xfPort {
 			case "80":
@@ -407,7 +414,7 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	if stateToken != "" {
 		stateData, ok := authStates.Consume(stateToken)
 		if !ok {
-			log.Printf("Authorization state expired or invalid: %s", stateToken)
+			slog.Warn("authorization state expired or invalid", "state", stateToken)
 			values := url.Values{}
 			values.Set("result", "error")
 			values.Set("error", "Authorization session expired. Please start again.")
@@ -465,9 +472,9 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 			if storedUsername != "" {
 				if username != "" && storedUsername != username {
 					if correlationID != "" {
-						log.Printf("[MANUAL_RENEWAL] correlation_id=%s plaxt_id=%s note=\"Overriding supplied username\" supplied_username=%s stored_username=%s", correlationID, existingID, username, storedUsername)
+						slog.Info("manual renewal overriding supplied username", "correlation_id", correlationID, "plaxt_id", existingID, "supplied_username", username, "stored_username", storedUsername)
 					} else {
-						log.Printf("Manual renewal overriding supplied username %s with stored username for %s", username, existingID)
+						slog.Info("manual renewal overriding supplied username", "supplied_username", username, "plaxt_id", existingID)
 					}
 				}
 				username = storedUsername
@@ -477,9 +484,9 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 
 	if username == "" {
 		if mode == "renew" && correlationID != "" {
-			log.Printf("[MANUAL_RENEWAL] result=error correlation_id=%s error_detail=\"Missing username\"", correlationID)
+			slog.Error("manual renewal error: missing username", "correlation_id", correlationID)
 		} else {
-			log.Print("Authorization request missing username")
+			slog.Warn("authorization request missing username")
 		}
 		errorMessage := "Missing username; please try again."
 		if mode == "renew" && existingID != "" && manualStoredUser == nil {
@@ -498,9 +505,9 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	code := strings.TrimSpace(args.Get("code"))
 	if code == "" {
 		if mode == "renew" && correlationID != "" {
-			log.Printf("[MANUAL_RENEWAL] result=cancelled correlation_id=%s username=%s plaxt_id=%s", correlationID, username, existingID)
+			slog.Info("manual renewal cancelled", "correlation_id", correlationID, "username", username, "plaxt_id", existingID)
 		} else {
-			log.Printf("Authorization cancelled for %s (%s)", username, existingID)
+			slog.Info("authorization cancelled", "username", username, "plaxt_id", existingID)
 		}
 		// Redirect back to step 1 of the appropriate flow with cancellation message
 		if mode == "renew" {
@@ -508,6 +515,8 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 				"result":         "cancelled",
 				"mode":           "renew",
 				"step":           "select",
+				"id":             existingID,
+				"username":       username,
 				"correlation_id": truncateCorrelationID(correlationID),
 			})
 		} else {
@@ -520,7 +529,7 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Handling auth request for %s", username)
+	slog.Info("authorize handling", "username", username, "mode", mode, "plaxt_id", existingID)
 	callbackPath := "/authorize"
 	if mode == "renew" {
 		callbackPath = "/manual/authorize"
@@ -571,10 +580,9 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if mode == "renew" && correlationID != "" {
-			log.Printf("[MANUAL_RENEWAL] result=error correlation_id=%s username=%s plaxt_id=%s http_status=%d trakt_error=%s error_detail=\"%s\"",
-				correlationID, username, existingID, httpStatus, traktError, errorDetail)
+			slog.Error("manual renewal trakt exchange error", "correlation_id", correlationID, "username", username, "plaxt_id", existingID, "http_status", httpStatus, "trakt_error", traktError, "detail", errorDetail)
 		} else {
-			log.Printf("Authorization failed for %s (%s): %s", username, existingID, errorDetail)
+			slog.Error("authorization failed", "username", username, "plaxt_id", existingID, "detail", errorDetail)
 		}
 
 		stepParam := "authorize"
@@ -597,9 +605,9 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	refreshToken, refreshOK := result["refresh_token"].(string)
 	if !accessOK || !refreshOK || accessToken == "" || refreshToken == "" {
 		if mode == "renew" && correlationID != "" {
-			log.Printf("[MANUAL_RENEWAL] result=error correlation_id=%s username=%s plaxt_id=%s error_detail=\"Trakt response missing tokens\"", correlationID, username, existingID)
+			slog.Error("manual renewal trakt response missing tokens", "correlation_id", correlationID, "username", username, "plaxt_id", existingID)
 		} else {
-			log.Printf("Authorization response missing tokens for %s (%s)", username, existingID)
+			slog.Error("authorization response missing tokens", "username", username, "plaxt_id", existingID)
 		}
 		stepParam := "authorize"
 		if mode == "renew" {
@@ -630,9 +638,9 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		displayNamePrompt = true
 		if mode == "renew" && correlationID != "" {
-			log.Printf("[MANUAL_RENEWAL] correlation_id=%s username=%s plaxt_id=%s display_name_fetch_error=\"%s\"", correlationID, username, existingID, err.Error())
+			slog.Warn("display name fetch error", "correlation_id", correlationID, "username", username, "plaxt_id", existingID, "error", err)
 		} else {
-			log.Printf("Failed to fetch Trakt display name for %s: %v", username, err)
+			slog.Warn("display name fetch error", "username", username, "error", err)
 		}
 	} else if strings.TrimSpace(name) != "" {
 		displayNameValue = strings.TrimSpace(name)
@@ -647,16 +655,16 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	user, reused, persistErr := persistAuthorizedUser(username, existingID, accessToken, refreshToken, displayNamePointer)
 	if persistErr != nil {
 		errMessage := ""
-		switch {
-		case persistErr == errUsernameMismatch:
+		switch  persistErr{
+		case errUsernameMismatch:
 			errMessage = "Username mismatch. Authorization was for a different Plex user."
 		default:
 			errMessage = "Selected user no longer exists. Please choose another user."
 		}
 		if mode == "renew" && correlationID != "" {
-			log.Printf("[MANUAL_RENEWAL] result=error correlation_id=%s username=%s plaxt_id=%s error_detail=\"%s\"", correlationID, username, existingID, persistErr.Error())
+			slog.Error("manual renewal persist error", "correlation_id", correlationID, "username", username, "plaxt_id", existingID, "error", persistErr)
 		} else {
-			log.Printf("Manual renewal failed for %s (%s): %v", username, existingID, persistErr)
+			slog.Error("manual renewal failed", "username", username, "plaxt_id", existingID, "error", persistErr)
 		}
 		stepParam := "authorize"
 		if mode == "renew" {
@@ -700,9 +708,9 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if displayNameWarning == "truncated" {
 		if mode == "renew" && correlationID != "" {
-			log.Printf("[MANUAL_RENEWAL] correlation_id=%s username=%s plaxt_id=%s display_name_warning=\"truncated\"", correlationID, username, user.ID)
+			slog.Info("display name truncated", "correlation_id", correlationID, "username", username, "plaxt_id", user.ID)
 		} else {
-			log.Printf("Trakt display name truncated to 50 characters for %s", user.Username)
+			slog.Info("display name truncated", "username", user.Username)
 		}
 	}
 	if mode == "renew" {
@@ -715,19 +723,19 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 
 	if reused {
 		if correlationID != "" {
-			log.Printf("[MANUAL_RENEWAL] result=success correlation_id=%s username=%s plaxt_id=%s", correlationID, username, user.ID)
+			slog.Info("manual renewal success", "correlation_id", correlationID, "username", username, "plaxt_id", user.ID)
 			params["correlation_id"] = truncateCorrelationID(correlationID)
 		} else {
-			log.Printf("Manual renewal succeeded for %s (%s)", username, user.ID)
+			slog.Info("manual renewal success", "username", username, "plaxt_id", user.ID)
 		}
 	} else if existingID != "" && user.ID != existingID {
 		// User ID changed during renewal - keep renewal mode but log the change
-		log.Printf("Manual renewal for %s created new user %s (previous id %s)", username, user.ID, existingID)
+		slog.Info("manual renewal created new user", "username", username, "new_plaxt_id", user.ID, "previous_id", existingID)
 		if correlationID != "" {
 			params["correlation_id"] = truncateCorrelationID(correlationID)
 		}
 	} else {
-		log.Printf("Authorized as %s", user.ID)
+		slog.Info("authorized", "plaxt_id", user.ID)
 	}
 
 	redirectWith(params)
@@ -769,7 +777,7 @@ func renderLandingPage(w http.ResponseWriter, r *http.Request) {
 	page := prepareAuthorizePage(r)
 	tmpl := template.Must(template.ParseFiles("static/index.html"))
 	if err := tmpl.Execute(w, page); err != nil {
-		log.Printf("failed to render landing page: %v", err)
+		slog.Error("failed to render landing page", "error", err)
 	}
 }
 
@@ -871,10 +879,10 @@ func buildOnboardingContext(root string, query url.Values) OnboardingContext {
 		activeIndex = 0
 	default:
 		// Fallback to existing result-based logic for backwards compatibility
-		switch {
-		case result == "success":
+		switch  result{
+		case "success":
 			activeIndex = 2
-		case result == "error" || result == "cancelled":
+		case "error", "cancelled":
 			activeIndex = 1
 		default:
 			activeIndex = 0
@@ -886,10 +894,11 @@ func buildOnboardingContext(root string, query url.Values) OnboardingContext {
 	if username != "" {
 		steps[0].Summary = fmt.Sprintf("Plex username: %s", username)
 	}
-	if result == "success" {
+	switch result {
+	case "success":
 		steps[1].Summary = "Trakt authorization complete"
 		steps[2].Summary = fmt.Sprintf("Webhook ready: %s", webhook)
-	} else if result == "error" || result == "cancelled" {
+	case "error", "cancelled":
 		steps[1].Summary = "Awaiting successful Trakt authorization"
 	}
 
@@ -920,7 +929,7 @@ func buildOnboardingContext(root string, query url.Values) OnboardingContext {
 	}
 }
 
-func buildManualContext(root string, manualUsers []ManualUser, query url.Values, mode string) ManualRenewContext {
+func buildManualContext(_ string, manualUsers []ManualUser, query url.Values, mode string) ManualRenewContext {
 	selectedID := strings.TrimSpace(query.Get("id"))
 	result := strings.ToLower(strings.TrimSpace(query.Get("result")))
 	stepParam := strings.ToLower(strings.TrimSpace(query.Get("step")))
@@ -982,9 +991,6 @@ func buildManualContext(root string, manualUsers []ManualUser, query url.Values,
 			steps[1].Summary = fmt.Sprintf("Confirm renewal for %s", display)
 			break
 		}
-	}
-	if selectedUser == nil && len(manualUsers) > 0 {
-		manualUsers[0].DisplayLabel = manualUsers[0].DisplayLabel
 	}
 
 	resolvedDisplayName := displayNameParam
@@ -1097,17 +1103,14 @@ func updateTraktDisplayName(w http.ResponseWriter, r *http.Request) {
 	}
 	truncated := user.UpdateDisplayName(namePtr)
 
-	log.Printf("Updated Trakt display name for %s (%s)", user.Username, user.ID)
-	if truncated {
-		log.Printf("Manual display name truncated to 50 characters for %s", user.Username)
-	}
+	slog.Info("updated display name", "username", user.Username, "plaxt_id", user.ID, "truncated", truncated)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"display_name": user.TraktDisplayName,
 		"truncated":    truncated,
 	}); err != nil {
-		log.Printf("failed to encode display name response: %v", err)
+		slog.Error("failed to encode display name response", "error", err)
 	}
 }
 
@@ -1117,31 +1120,59 @@ func api(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	regex := regexp.MustCompile("({.*})") // not the best way really
-	match := regex.FindStringSubmatch(string(body))
-	if len(match) == 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+
+	var payload []byte
+	ct := strings.ToLower(r.Header.Get("Content-Type"))
+	if strings.Contains(ct, "multipart/form-data") {
+		mr, mErr := r.MultipartReader()
+		if mErr == nil {
+			for {
+				part, perr := mr.NextPart()
+				if perr == io.EOF {
+					break
+				}
+				if perr != nil {
+					break
+				}
+				if part.FormName() == "payload" {
+					payload, _ = io.ReadAll(part)
+					break
+				}
+			}
+		}
 	}
-	webhook, err := plexhooks.ParseWebhook([]byte(match[0]))
+	if len(payload) == 0 {
+		payload = body
+	}
+	// Try strict JSON first; fall back to legacy regex extraction
+	webhook, err := plexhooks.ParseWebhook(payload)
 	if err != nil || webhook == nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		regex := regexp.MustCompile("({.*})")
+		match := regex.FindStringSubmatch(string(payload))
+		if len(match) == 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		webhook, err = plexhooks.ParseWebhook([]byte(match[0]))
+		if err != nil || webhook == nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 	}
 	username := strings.ToLower(webhook.Account.Title)
-	log.Print(fmt.Sprintf("Webhook call for %s (%s)", id, webhook.Account.Title))
+		slog.Info("webhook received", "event", webhook.Event, "username", username, "id", id, "type", strings.ToLower(webhook.Metadata.Type), "title", webhook.Metadata.Title, "show", webhook.Metadata.GrandparentTitle, "season", webhook.Metadata.ParentIndex, "episode", webhook.Metadata.Index, "server", webhook.Server.Title, "client", webhook.Player.Title)
 
 	// Handle the requests of the same user one at a time
 	key := fmt.Sprintf("%s@%s", username, id)
-	userInf, err, _ := apiSf.Do(key, func() (interface{}, error) {
+	userInf, err, _ := apiSf.Do(key, func() (any, error) {
 		user := storage.GetUser(id)
 		if user == nil {
-			log.Println("id is invalid")
+			slog.Warn("invalid id", "id", id)
 			return nil, trakt.NewHttpError(http.StatusForbidden, "id is invalid")
 		}
 		if webhook.Owner && username != user.Username {
@@ -1149,29 +1180,30 @@ func api(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if user == nil {
-			log.Println("User not found.")
+			slog.Warn("user not found", "id", id, "username", username)
 			return nil, trakt.NewHttpError(http.StatusNotFound, "user not found")
 		}
 
 		tokenAge := time.Since(user.Updated).Hours()
 		if tokenAge > 23 { // tokens expire after 24 hours, so we refresh after 23
-			log.Println("User access token outdated, refreshing...")
+			slog.Info("token refresh request", "username", user.Username, "plaxt_id", user.ID)
 			redirectURI := SelfRoot(r) + "/authorize"
 			result, success := traktSrv.AuthRequest(redirectURI, user.Username, "", user.RefreshToken, "refresh_token")
 			if success {
 				user.UpdateUser(result["access_token"].(string), result["refresh_token"].(string), nil)
-				log.Println("Refreshed, continuing")
+				slog.Info("token refresh success", "username", user.Username, "plaxt_id", user.ID)
 			} else {
-				log.Println("Refresh failed, skipping and deleting user")
-				storage.DeleteUser(user.ID, user.Username)
+				slog.Warn("token refresh failed", "username", user.Username, "plaxt_id", user.ID)
+				// Do not delete user on transient failure; return 401 so caller can retry later
 				return nil, trakt.NewHttpError(http.StatusUnauthorized, "fail")
 			}
 		}
 		return user, nil
 	})
 	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(err.(trakt.HttpError).Code)
-		json.NewEncoder(w).Encode(err.Error())
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	user := userInf.(*store.User)
@@ -1179,15 +1211,36 @@ func api(w http.ResponseWriter, r *http.Request) {
 	if username == user.Username {
 		traktSrv.Handle(webhook, *user)
 	} else {
-		log.Println(fmt.Sprintf("Plex username %s does not equal %s, skipping", strings.ToLower(webhook.Account.Title), user.Username))
+		slog.Info("username mismatch; skipping", "plex_username", strings.ToLower(webhook.Account.Title), "plaxt_username", user.Username)
 	}
 
-	json.NewEncoder(w).Encode("success")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"result": "success"})
 }
 
 func allowedHostsHandler(allowedHostnames string) func(http.Handler) http.Handler {
-	allowedHosts := strings.Split(regexp.MustCompile("https://|http://|\\s+").ReplaceAllString(strings.ToLower(allowedHostnames), ""), ",")
-	log.Println("Allowed Hostnames:", allowedHosts)
+	raw := strings.ToLower(allowedHostnames)
+	parts := strings.Split(raw, ",")
+	allowedHosts := make([]string, 0, len(parts))
+	allowedBare := make([]string, 0, len(parts)) // entries without an explicit port
+	for _, p := range parts {
+		h := strings.TrimSpace(p)
+		if h == "" {
+			continue
+		}
+		// Strip optional scheme and any path suffix to keep only host[:port]
+		h = strings.TrimPrefix(strings.TrimPrefix(h, "https://"), "http://")
+		if idx := strings.Index(h, "/"); idx != -1 {
+			h = h[:idx]
+		}
+		allowedHosts = append(allowedHosts, h)
+		// If the allowed entry does NOT specify a port, also remember the bare hostname for matching
+		if _, _, err := net.SplitHostPort(h); err != nil {
+			// No explicit port present
+			allowedBare = append(allowedBare, h)
+		}
+	}
+	slog.Info("allowed hostnames", "hosts", allowedHosts)
 	return func(h http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.EscapedPath() == "/healthcheck" {
@@ -1195,11 +1248,30 @@ func allowedHostsHandler(allowedHostnames string) func(http.Handler) http.Handle
 				return
 			}
 			isAllowedHost := false
-			lcHost := strings.ToLower(r.Host)
+			lcHost := strings.ToLower(strings.TrimSpace(r.Host))
+			// 1) Exact host[:port] match
 			for _, value := range allowedHosts {
 				if lcHost == value {
 					isAllowedHost = true
 					break
+				}
+			}
+			// 2) If not matched, try host-only comparison when allowed entry had no explicit port
+			if !isAllowedHost && len(allowedBare) > 0 {
+				reqHostOnly := lcHost
+				if host, _, err := net.SplitHostPort(lcHost); err == nil {
+					reqHostOnly = host
+				} else {
+					// Fall back for inputs like "example.com:443" without brackets
+					if idx := strings.LastIndex(lcHost, ":"); idx != -1 && !strings.Contains(lcHost[idx+1:], ":") {
+						reqHostOnly = lcHost[:idx]
+					}
+				}
+				for _, base := range allowedBare {
+					if reqHostOnly == base {
+						isAllowedHost = true
+						break
+					}
 				}
 			}
 			if !isAllowedHost {
@@ -1225,26 +1297,38 @@ func healthcheckHandler() http.Handler {
 }
 
 func main() {
-	log.Printf("Started version=\"%s (%s@%s)\"", version, commit, date)
+	// init structured logging
+	logging.Init()
+	// read trust proxy flag
+	trustProxy = true
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("TRUST_PROXY"))); v != "" {
+		trustProxy = v == "1" || v == "true" || v == "yes"
+	}
+
+	slog.Info("starting", "version", version, "commit", commit, "date", date)
 	if os.Getenv("POSTGRESQL_URL") != "" {
 		storage = store.NewPostgresqlStore(store.NewPostgresqlClient(os.Getenv("POSTGRESQL_URL")))
-		log.Println("Using postgresql storage:", os.Getenv("POSTGRESQL_URL"))
+		slog.Info("using postgres storage", "url", os.Getenv("POSTGRESQL_URL"))
 	} else if os.Getenv("REDIS_URL") != "" {
 		storage = store.NewRedisStore(store.NewRedisClientWithUrl(os.Getenv("REDIS_URL")))
-		log.Println("Using redis storage: ", os.Getenv("REDIS_URL"))
+		slog.Info("using redis storage", "url", os.Getenv("REDIS_URL"))
 	} else if os.Getenv("REDIS_URI") != "" {
 		storage = store.NewRedisStore(store.NewRedisClient(os.Getenv("REDIS_URI"), os.Getenv("REDIS_PASSWORD")))
-		log.Println("Using redis storage:", os.Getenv("REDIS_URI"))
+		slog.Info("using redis storage", "uri", os.Getenv("REDIS_URI"))
 	} else {
 		storage = store.NewDiskStore()
-		log.Println("Using disk storage:")
+		slog.Info("using disk storage")
 	}
 	apiSf = &singleflight.Group{}
 	traktSrv = trakt.New(config.TraktClientId, config.TraktClientSecret, storage)
 
 	router := mux.NewRouter()
 	// Assumption: Behind a proper web server (nginx/traefik, etc) that removes/replaces trusted headers
-	router.Use(handlers.ProxyHeaders)
+	router.Use(recoveryMiddleware)
+	router.Use(requestLoggerMiddleware())
+	if trustProxy {
+		router.Use(handlers.ProxyHeaders)
+	}
 	// which hostnames we are allowing
 	// REDIRECT_URI = old legacy list
 	// ALLOWED_HOSTNAMES = new accurate config variable
@@ -1266,6 +1350,49 @@ func main() {
 	if listen == "" {
 		listen = "0.0.0.0:8000"
 	}
-	log.Print("Started on " + listen + "!")
-	log.Fatal(http.ListenAndServe(listen, router))
+	slog.Info("server starting", "listen", listen, "version", version, "commit", commit, "date", date)
+	slog.Error("server exited", "error", http.ListenAndServe(listen, router))
+}
+
+// requestLoggerMiddleware logs method, path, status, and duration for each request.
+func requestLoggerMiddleware() mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sr := &statusRecorder{ResponseWriter: w, status: 200}
+			start := time.Now()
+			next.ServeHTTP(sr, r)
+			duration := time.Since(start)
+			slog.Info("request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", sr.status,
+				"duration_ms", duration.Milliseconds(),
+				"remote", r.RemoteAddr,
+			)
+		})
+	}
+}
+
+// statusRecorder captures HTTP status codes.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+// recoveryMiddleware logs panics and prevents server crashes by returning 500.
+func recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("panic", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr, "error", rec, "stack", string(debug.Stack()))
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }

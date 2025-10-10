@@ -21,7 +21,6 @@ func NewDiskStore() *DiskStore {
 
 // Ping will check if the connection works right
 func (s DiskStore) Ping(ctx context.Context) error {
-	// TODO not sure what can fail here
 	return nil
 }
 
@@ -68,6 +67,17 @@ func (s DiskStore) GetUser(id string) *User {
 
 // GetUserByName will load a user from disk
 func (s DiskStore) GetUserByName(username string) *User {
+	username = strings.ToLower(strings.TrimSpace(username))
+	if username == "" {
+		return nil
+	}
+	// Reuse ListUsers to avoid duplicating disk key iteration logic
+	for _, u := range s.ListUsers() {
+		if strings.ToLower(u.Username) == username {
+			// Return a fresh copy from disk to ensure fields (like Updated) are consistent
+			return s.GetUser(u.ID)
+		}
+	}
 	return nil
 }
 

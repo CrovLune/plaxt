@@ -6,9 +6,56 @@ This fork continues the work of [XanderStrike's goplaxt](https://github.com/Xand
 
 ## [Unreleased]
 
+### Added (2025-10-10)
+- **Optimized CircleCI CI/CD pipeline** with three workflows:
+  - Automated build and test on every commit with race detection and coverage reports
+  - Nightly builds (scheduled daily at 2 AM UTC) with automatic versioning (`nightly-YYYYMMDD-commit`)
+  - Manual release workflow with approval gate for production deployments
+- **Dual caching strategy** for CircleCI:
+  - Go module cache (keyed by `go.sum`)
+  - Go build cache (keyed by branch and commit)
+  - Results in 75% faster cached builds (30-45s vs 2-3min)
+- **Version injection system** using Docker build arguments:
+  - `VERSION`, `COMMIT`, and `DATE` injected into binary via Go linker flags
+  - Version info displayed in application logs on startup
+- **Multi-architecture Docker builds** via CircleCI:
+  - Automated builds for linux/amd64 and linux/arm64
+  - Docker Buildx integration with layer caching
+- **Semantic versioning support**:
+  - Tag-based releases (e.g., `v1.2.16`)
+  - Automatic creation of multiple Docker tags: `latest`, `1.2.16`, `1.2`
+  - Nightly tags for testing: `nightly` and `nightly-YYYYMMDD-commit`
+- **Comprehensive CI/CD documentation**:
+  - `.circleci/README.md` - Complete guide with troubleshooting and performance benchmarks
+  - `RELEASING.md` - Quick reference for creating releases with checklists
+  - Documentation for versioning strategy and Docker Hub integration
+
 ### Fixed (2025-10-10)
 - Fixed manual renewal flow UI issue where incident ID and "Start Over" button incorrectly appeared at step 1 after canceling Trakt authorization
 - Banner actions (incident ID, Start Over button) now only display when on the result step (step 3)
+
+### Changed (2025-10-10)
+- **CircleCI configuration completely rewritten** for performance and reliability:
+  - Updated from basic test-only workflow to full CI/CD pipeline
+  - Migrated to machine executor for Docker builds (better performance)
+  - Added test result and coverage artifact storage
+  - Implemented parallel job execution where possible
+  - Added manual approval gates for production releases
+- **Dockerfile enhanced** with build argument support:
+  - Accepts `VERSION`, `COMMIT`, and `DATE` build args
+  - Updated build command to inject version info via ldflags
+  - Maintains existing multi-stage build optimization
+- **Docker build context optimized**:
+  - Enhanced `.dockerignore` to exclude unnecessary files
+  - Reduced build context size to ~2.35 MB
+  - Improved layer caching efficiency
+- Enhanced `.gitignore` to comprehensively exclude:
+  - AI assistant files (`.claude/`, `.codex/`, `.cursor/`, `.specify/`, `specs/`, `AGENTS.md`, `CLAUDE.md`)
+  - Build artifacts and test binaries (`plaxt-test`, `*.test`, `*.out`)
+  - Go build caches (`.gocache/`, `.gomodcache/`)
+  - IDE files (`.idea/`, `.vscode/`, editor swap files)
+  - System files (`.DS_Store`)
+  - Logs and environment files
 
 ### Removed (2025-10-10)
 - Cleaned up AI assistant files and development artifacts from repository
@@ -17,23 +64,6 @@ This fork continues the work of [XanderStrike's goplaxt](https://github.com/Xand
   - `.gitignore` (covered by main .gitignore)
   - `README.md` (internal package documentation)
 - Removed all `.DS_Store` files (macOS system files)
-
-### Changed (2025-10-10)
-- Enhanced `.gitignore` to comprehensively exclude:
-  - AI assistant files (`.claude/`, `.codex/`, `.cursor/`, `.specify/`, `specs/`, `AGENTS.md`, `CLAUDE.md`)
-  - Build artifacts and test binaries (`plaxt-test`, `*.test`, `*.out`)
-  - Go build caches (`.gocache/`, `.gomodcache/`)
-  - IDE files (`.idea/`, `.vscode/`, editor swap files)
-  - System files (`.DS_Store`)
-  - Logs and environment files
-- Enhanced `.dockerignore` to exclude unnecessary files from Docker build context:
-  - Git repository files
-  - CI/CD configurations
-  - Documentation files
-  - Test files
-  - Build caches and artifacts
-  - AI assistant files
-  - Reduced Docker build context size to ~2.35 MB
 
 ## [1.2.15] - 2025-10-10
 

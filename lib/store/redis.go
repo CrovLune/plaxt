@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"crovlune/plaxt/lib/common"
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -22,42 +22,41 @@ const (
 
 // RedisStore is a storage engine that writes to redis
 type RedisStore struct {
-	client redis.Client
+	client *redis.Client
 }
 
 // NewRedisClient creates a new redis client object
-func NewRedisClient(addr string, password string) redis.Client {
+func NewRedisClient(addr string, password string) *redis.Client {
 	client := redis.NewClient(&redis.Options{
 		Addr:     addr,
 		Password: password,
 		DB:       0,
 	})
 
-	_, err := client.Ping().Result()
-	// FIXME
+	_, err := client.Ping(context.Background()).Result()
 	if err != nil {
 		panic(err)
 	}
-	return *client
+	return client
 }
 
 // NewRedisClientWithUrl creates a new redis client object
-func NewRedisClientWithUrl(url string) redis.Client {
+func NewRedisClientWithUrl(url string) *redis.Client {
 	option, err := redis.ParseURL(url)
 	if err != nil {
 		panic(err)
 	}
 
 	client := redis.NewClient(option)
-	_, err = client.Ping().Result()
+	_, err = client.Ping(context.Background()).Result()
 	if err != nil {
 		panic(err)
 	}
-	return *client
+	return client
 }
 
 // NewRedisStore creates new store
-func NewRedisStore(client redis.Client) RedisStore {
+func NewRedisStore(client *redis.Client) RedisStore {
 	return RedisStore{
 		client: client,
 	}
@@ -65,30 +64,30 @@ func NewRedisStore(client redis.Client) RedisStore {
 
 // Ping will check if the connection works right
 func (s RedisStore) Ping(ctx context.Context) error {
-	_, err := s.client.WithContext(ctx).Ping().Result()
+	_, err := s.client.Ping(ctx).Result()
 	return err
 }
 
 // WriteUser will write a user object to redis
 func (s RedisStore) WriteUser(user User) {
+	ctx := context.Background()
 	currentUser := s.GetUserByName(user.Username)
 	pipe := s.client.Pipeline()
-	data := make(map[string]interface{})
-	data["username"] = user.Username
-	data["access"] = user.AccessToken
-	data["refresh"] = user.RefreshToken
-	data["updated"] = user.Updated.Format("01-02-2006")
-	data["trakt_display_name"] = user.TraktDisplayName
-	pipe.HMSet(userPrefix+user.ID, data)
-	pipe.Expire(userPrefix+user.ID, accessTokenTimeout)
+	key := userPrefix + user.ID
+	pipe.HSet(ctx, key, "username", user.Username)
+	pipe.HSet(ctx, key, "access", user.AccessToken)
+	pipe.HSet(ctx, key, "refresh", user.RefreshToken)
+	pipe.HSet(ctx, key, "updated", user.Updated.Format("01-02-2006"))
+	pipe.HSet(ctx, key, "trakt_display_name", user.TraktDisplayName)
+	pipe.Expire(ctx, key, accessTokenTimeout)
 	// a username should always be occupied by the first id binded to it unless it's expired
 	if currentUser == nil {
-		pipe.Set(userMapPrefix+user.Username, user.ID, accessTokenTimeout)
+		pipe.Set(ctx, userMapPrefix+user.Username, user.ID, accessTokenTimeout)
 	} else if currentUser.ID == user.ID {
 		// extend the TTL on refresh
-		pipe.Expire(userMapPrefix+user.Username, accessTokenTimeout)
+		pipe.Expire(ctx, userMapPrefix+user.Username, accessTokenTimeout)
 	}
-	_, err := pipe.Exec()
+	_, err := pipe.Exec(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -96,7 +95,8 @@ func (s RedisStore) WriteUser(user User) {
 
 // GetUser will load a user from redis
 func (s RedisStore) GetUser(id string) *User {
-	data, err := s.client.HGetAll(userPrefix + id).Result()
+	ctx := context.Background()
+	data, err := s.client.HGetAll(ctx, userPrefix+id).Result()
 	if err != nil {
 		return nil
 	}
@@ -119,7 +119,8 @@ func (s RedisStore) GetUser(id string) *User {
 
 // GetUserByName will load a user from redis
 func (s RedisStore) GetUserByName(username string) *User {
-	id, err := s.client.Get(userMapPrefix + username).Result()
+	ctx := context.Background()
+	id, err := s.client.Get(ctx, userMapPrefix+username).Result()
 	if err != nil {
 		return nil
 	}
@@ -128,15 +129,17 @@ func (s RedisStore) GetUserByName(username string) *User {
 
 // DeleteUser will delete a user from redis
 func (s RedisStore) DeleteUser(id, username string) bool {
+	ctx := context.Background()
 	pipe := s.client.Pipeline()
-	pipe.Del(userPrefix + id)
-	pipe.Del(userMapPrefix + username)
-	_, err := pipe.Exec()
+	pipe.Del(ctx, userPrefix+id)
+	pipe.Del(ctx, userMapPrefix+username)
+	_, err := pipe.Exec(ctx)
 	return err == nil
 }
 
 func (s RedisStore) ListUsers() []User {
-	keys, err := s.client.Keys(userPrefix + "*").Result()
+	ctx := context.Background()
+	keys, err := s.client.Keys(ctx, userPrefix+"*").Result()
 	if err != nil {
 		panic(err)
 	}
@@ -162,12 +165,13 @@ func (s RedisStore) ListUsers() []User {
 }
 
 func (s RedisStore) GetScrobbleBody(playerUuid, ratingKey string) (item common.CacheItem) {
+	ctx := context.Background()
 	item = common.CacheItem{
 		Body: common.ScrobbleBody{
 			Progress: 0,
 		},
 	}
-	cache, err := s.client.Get(fmt.Sprintf(scrobbleFormat, playerUuid, ratingKey)).Bytes()
+	cache, err := s.client.Get(ctx, fmt.Sprintf(scrobbleFormat, playerUuid, ratingKey)).Bytes()
 	if err != nil {
 		return
 	}
@@ -176,6 +180,7 @@ func (s RedisStore) GetScrobbleBody(playerUuid, ratingKey string) (item common.C
 }
 
 func (s RedisStore) WriteScrobbleBody(item common.CacheItem) {
+	ctx := context.Background()
 	b, _ := json.Marshal(item)
-	s.client.Set(fmt.Sprintf(scrobbleFormat, item.PlayerUuid, item.RatingKey), b, scrobbleTimeout)
+	s.client.Set(ctx, fmt.Sprintf(scrobbleFormat, item.PlayerUuid, item.RatingKey), b, scrobbleTimeout)
 }

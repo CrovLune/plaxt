@@ -1,7 +1,6 @@
 package config
 
 import (
-	"io/ioutil"
 	"os"
 	"strings"
 )
@@ -13,7 +12,7 @@ func getConfig(name string) string {
 	if os.Getenv(name) != "" {
 		return os.Getenv(name)
 	} else if os.Getenv(name+"_FILE") != "" {
-		file, err := ioutil.ReadFile(os.Getenv(name + "_FILE"))
+		file, err := os.ReadFile(os.Getenv(name + "_FILE"))
 
 		if err != nil {
 			panic(err)

@@ -101,10 +101,10 @@ func (s PostgresqlStore) GetUser(id string) *User {
 		&displayName,
 		&updated,
 	)
-	switch {
-	case err == sql.ErrNoRows:
-		panic(fmt.Errorf("no user with id %s", id))
-	case err != nil:
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
 		panic(fmt.Errorf("query error: %v", err))
 	}
 	user := User{
@@ -122,12 +122,25 @@ func (s PostgresqlStore) GetUser(id string) *User {
 
 // GetUserByName will load a user from postgres
 func (s PostgresqlStore) GetUserByName(username string) *User {
-	return nil
+	username = strings.ToLower(strings.TrimSpace(username))
+	if username == "" {
+		return nil
+	}
+	var id string
+	err := s.db.QueryRow("SELECT id FROM users WHERE lower(username)=lower($1) LIMIT 1", username).Scan(&id)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		panic(err)
+	}
+	return s.GetUser(id)
 }
 
-// TODO: Not Implemented
+// DeleteUser removes a user row and any username mapping from postgres.
 func (s PostgresqlStore) DeleteUser(id, username string) bool {
-	return true
+	_, err := s.db.Exec("DELETE FROM users WHERE id=$1", id)
+	return err == nil
 }
 
 func (s PostgresqlStore) ListUsers() []User {
