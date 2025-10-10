@@ -1,5 +1,59 @@
 package plexhooks
 
+import (
+	"bytes"
+	"encoding/json"
+	"strconv"
+)
+
+// FlexFloat unmarshals JSON that may be a number, string, or array into a float64.
+type FlexFloat float64
+
+func (f *FlexFloat) UnmarshalJSON(b []byte) error {
+	bb := bytes.TrimSpace(b)
+	if len(bb) == 0 || bytes.Equal(bb, []byte("null")) {
+		*f = 0
+		return nil
+	}
+	// Array case: take first number if present
+	if bb[0] == '[' {
+		var arrNum []float64
+		if err := json.Unmarshal(bb, &arrNum); err == nil {
+			if len(arrNum) > 0 {
+				*f = FlexFloat(arrNum[0])
+			}
+			return nil
+		}
+		var arrStr []string
+		if err := json.Unmarshal(bb, &arrStr); err == nil {
+			if len(arrStr) > 0 {
+				if v, err := strconv.ParseFloat(arrStr[0], 64); err == nil {
+					*f = FlexFloat(v)
+				}
+			}
+			return nil
+		}
+		// Unknown array type; ignore
+		return nil
+	}
+	// Number
+	var num float64
+	if err := json.Unmarshal(bb, &num); err == nil {
+		*f = FlexFloat(num)
+		return nil
+	}
+	// String number
+	var s string
+	if err := json.Unmarshal(bb, &s); err == nil {
+		if v, err := strconv.ParseFloat(s, 64); err == nil {
+			*f = FlexFloat(v)
+		}
+		return nil
+	}
+	// Fallback: ignore
+	return nil
+}
+
 // Webhook models the top-level Plex webhook payload.
 type Webhook struct {
 	Event    string   `json:"event"`
@@ -73,10 +127,9 @@ type Metadata struct {
 	Summary          string `json:"summary,omitempty"`
 	Tagline          string `json:"tagline,omitempty"`
 
-	Index       int     `json:"index,omitempty"`
-	ParentIndex int     `json:"parentIndex,omitempty"`
-	Rating      float32 `json:"rating,omitempty"`
-	RatingCount int     `json:"ratingCount,omitempty"`
+	Index       int `json:"index,omitempty"`
+	ParentIndex int `json:"parentIndex,omitempty"`
+	RatingCount int `json:"ratingCount,omitempty"`
 
 	AudienceRating float32 `json:"audienceRating,omitempty"`
 	ViewOffset     int     `json:"viewOffset,omitempty"`
@@ -106,4 +159,57 @@ type Metadata struct {
 	Countries []Tag `json:"Country,omitempty"`
 	Similar   []Tag `json:"Similar,omitempty"`
 	Roles     []Tag `json:"Role,omitempty"`
+}
+
+// UnmarshalJSON allows Metadata to tolerate audienceRating fields that may be numbers, strings, or arrays.
+// It also silently ignores the Rating array field that Plex sometimes sends.
+func (m *Metadata) UnmarshalJSON(b []byte) error {
+	var gen map[string]any
+	if err := json.Unmarshal(b, &gen); err != nil {
+		return err
+	}
+	var coerce func(any) float64
+	coerce = func(v any) float64 {
+		switch vv := v.(type) {
+		case float64:
+			return vv
+		case string:
+			if f, err := strconv.ParseFloat(vv, 64); err == nil {
+				return f
+			}
+		case map[string]any:
+			// common structure: {"value":7.9}
+			if val, ok := vv["value"]; ok {
+				return coerce(val)
+			}
+		case []any:
+			if len(vv) > 0 {
+				return coerce(vv[0])
+			}
+		}
+		return 0
+	}
+	// Remove the Rating array field that causes unmarshal errors - we don't use it
+	delete(gen, "Rating")
+	
+	// Coerce audienceRating if present
+	if v, ok := gen["audienceRating"]; ok {
+		gen["audienceRating"] = coerce(v)
+	}
+	// Coerce AudienceRating if present (capitalized version)
+	if v, ok := gen["AudienceRating"]; ok {
+		gen["audienceRating"] = coerce(v)
+	}
+	
+	bb, err := json.Marshal(gen)
+	if err != nil {
+		return err
+	}
+	type alias Metadata
+	var a alias
+	if err := json.Unmarshal(bb, &a); err != nil {
+		return err
+	}
+	*m = Metadata(a)
+	return nil
 }
