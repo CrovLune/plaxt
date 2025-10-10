@@ -1,6 +1,9 @@
 package common
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Ids represent the IDs representing a media item accross the metadata providers
 type Ids struct {
