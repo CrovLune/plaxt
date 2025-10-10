@@ -340,12 +340,20 @@
   <div class="admin-container">
     <div class="admin-header">
       <h1>User Management</h1>
-      <a href="/" class="btn-back">
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-          <path d="M8 4L2 10L8 16M2 10H18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-        Back to Home
-      </a>
+      <div style="display: flex; gap: 0.75rem;">
+        <a href="/admin/queue" class="btn btn-edit" style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 12h18M3 6h18M3 18h18"/>
+          </svg>
+          Queue Monitor
+        </a>
+        <a href="/" class="btn-back">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M8 4L2 10L8 16M2 10H18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          Back to Home
+        </a>
+      </div>
     </div>
 
     <div class="admin-stats">

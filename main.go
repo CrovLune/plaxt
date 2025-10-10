@@ -42,9 +42,120 @@ var (
 	apiSf      *singleflight.Group
 	traktSrv   *trakt.Trakt
 	trustProxy bool = true
+	
+	// Queue monitoring
+	queueEventLog   *store.QueueEventLog
+	drainStateTracker *DrainStateTracker
 )
 
 var errUsernameMismatch = errors.New("manual renewal username mismatch")
+
+// ========== QUEUE MONITORING TYPES ==========
+
+// DrainStateTracker tracks active queue drain operations for monitoring.
+type DrainStateTracker struct {
+	mu              sync.RWMutex
+	activeUsers     map[string]*UserDrainInfo
+	lastHealthCheck time.Time
+	mode            string // "live" | "queue"
+}
+
+// UserDrainInfo tracks drain progress for a specific user.
+type UserDrainInfo struct {
+	UserID          string
+	StartedAt       time.Time
+	EventsProcessed int
+	EventsFailed    int
+	NextRetryAt     *time.Time
+}
+
+// NewDrainStateTracker creates a new drain state tracker.
+func NewDrainStateTracker() *DrainStateTracker {
+	return &DrainStateTracker{
+		activeUsers: make(map[string]*UserDrainInfo),
+		mode:        "live",
+	}
+}
+
+// RecordDrainStart marks a user's drain as active.
+func (d *DrainStateTracker) RecordDrainStart(userID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.activeUsers[userID] = &UserDrainInfo{
+		UserID:    userID,
+		StartedAt: time.Now(),
+	}
+}
+
+// RecordDrainComplete removes a user from active drain tracking.
+func (d *DrainStateTracker) RecordDrainComplete(userID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.activeUsers, userID)
+}
+
+// RecordEvent updates event counters for a user.
+func (d *DrainStateTracker) RecordEvent(userID string, success bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if info, ok := d.activeUsers[userID]; ok {
+		if success {
+			info.EventsProcessed++
+		} else {
+			info.EventsFailed++
+		}
+	}
+}
+
+// GetUserInfo returns drain info for a specific user.
+func (d *DrainStateTracker) GetUserInfo(userID string) *UserDrainInfo {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if info, ok := d.activeUsers[userID]; ok {
+		copy := *info
+		return &copy
+	}
+	return nil
+}
+
+// GetAllActiveUsers returns all users with active drains.
+func (d *DrainStateTracker) GetAllActiveUsers() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	userIDs := make([]string, 0, len(d.activeUsers))
+	for userID := range d.activeUsers {
+		userIDs = append(userIDs, userID)
+	}
+	return userIDs
+}
+
+// SetMode updates the system mode ("live" or "queue").
+func (d *DrainStateTracker) SetMode(mode string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.mode = mode
+}
+
+// GetMode returns the current system mode.
+func (d *DrainStateTracker) GetMode() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.mode
+}
+
+// UpdateHealthCheck records the last health check time.
+func (d *DrainStateTracker) UpdateHealthCheck() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lastHealthCheck = time.Now()
+}
+
+// GetLastHealthCheck returns the last health check time.
+func (d *DrainStateTracker) GetLastHealthCheck() time.Time {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.lastHealthCheck
+}
 
 type authState struct {
 	Mode          string
@@ -1484,6 +1595,183 @@ func renderAdminDashboard(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "static/admin.html")
 }
 
+// ========== QUEUE MONITORING API ==========
+
+// renderQueueMonitor serves the queue monitoring HTML page
+func renderQueueMonitor(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "static/queue.html")
+}
+
+// getQueueStatus returns system-wide queue status
+func getQueueStatus(w http.ResponseWriter, r *http.Request) {
+	if storage == nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx := r.Context()
+	
+	// Get all users
+	users := storage.ListUsers()
+	
+	// Build per-user queue info
+	userInfos := make([]map[string]interface{}, 0, len(users))
+	totalEvents := 0
+	usersWithQueues := 0
+	
+	for _, user := range users {
+		queueSize, _ := storage.GetQueueSize(ctx, user.ID)
+		if queueSize > 0 {
+			usersWithQueues++
+			totalEvents += queueSize
+		}
+		
+		// Get oldest event for age calculation
+		events, _ := storage.DequeueScrobbles(ctx, user.ID, 1)
+		var oldestTime *time.Time
+		var oldestAgeSeconds *int64
+		if len(events) > 0 {
+			age := int64(time.Since(events[0].CreatedAt).Seconds())
+			oldestAgeSeconds = &age
+			oldestTime = &events[0].CreatedAt
+		}
+		
+		// Check if drain is active for this user
+		drainInfo := drainStateTracker.GetUserInfo(user.ID)
+		drainActive := drainInfo != nil
+		
+		// Determine status
+		status := determineQueueStatus(queueSize, oldestAgeSeconds, drainActive)
+		
+		userInfo := map[string]interface{}{
+			"user_id":            user.ID,
+			"username":           user.Username,
+			"trakt_display_name": user.TraktDisplayName,
+			"queue_size":         queueSize,
+			"status":             status,
+			"drain_active":       drainActive,
+		}
+		
+		if oldestAgeSeconds != nil {
+			userInfo["oldest_event_age_seconds"] = *oldestAgeSeconds
+			userInfo["oldest_event_timestamp"] = oldestTime
+		}
+		
+		if drainInfo != nil {
+			userInfo["events_processed"] = drainInfo.EventsProcessed
+			userInfo["events_failed"] = drainInfo.EventsFailed
+		}
+		
+		userInfos = append(userInfos, userInfo)
+	}
+	
+	response := map[string]interface{}{
+		"system": map[string]interface{}{
+			"total_users":         len(users),
+			"users_with_queues":   usersWithQueues,
+			"total_events":        totalEvents,
+			"drain_active":        len(drainStateTracker.GetAllActiveUsers()) > 0,
+			"mode":                drainStateTracker.GetMode(),
+			"last_health_check":   drainStateTracker.GetLastHealthCheck(),
+		},
+		"users": userInfos,
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// determineQueueStatus determines the queue status based on various factors
+func determineQueueStatus(queueSize int, oldestAgeSeconds *int64, drainActive bool) string {
+	if queueSize == 0 {
+		return "healthy"
+	}
+	if drainActive {
+		return "draining"
+	}
+	if oldestAgeSeconds != nil && *oldestAgeSeconds > 3600 {
+		return "stalled"
+	}
+	return "queued"
+}
+
+// getQueueEvents returns recent queue events from the log
+func getQueueEvents(w http.ResponseWriter, r *http.Request) {
+	if queueEventLog == nil {
+		http.Error(w, "queue event log unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	
+	// Get recent events (default 50)
+	events := queueEventLog.GetRecent(50)
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"events": events,
+	})
+}
+
+// getUserQueueDetail returns detailed queue info for a specific user
+func getUserQueueDetail(w http.ResponseWriter, r *http.Request) {
+	if storage == nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	
+	vars := mux.Vars(r)
+	userID := strings.TrimSpace(vars["id"])
+	if userID == "" {
+		http.Error(w, "missing user id", http.StatusBadRequest)
+		return
+	}
+	
+	ctx := r.Context()
+	
+	// Get user info
+	user := storage.GetUser(userID)
+	if user == nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	
+	// Get all queued events for user (up to 100)
+	events, err := storage.DequeueScrobbles(ctx, userID, 100)
+	if err != nil {
+		http.Error(w, "failed to fetch queue", http.StatusInternalServerError)
+		return
+	}
+	
+	// Calculate stats
+	stats := calculateQueueStats(events)
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"user_id":            user.ID,
+		"username":           user.Username,
+		"trakt_display_name": user.TraktDisplayName,
+		"queue_size":         len(events),
+		"events":             events,
+		"stats":              stats,
+	})
+}
+
+// calculateQueueStats computes statistics for a set of queued events
+func calculateQueueStats(events []store.QueuedScrobbleEvent) map[string]interface{} {
+	byAction := make(map[string]int)
+	byRetryCount := make(map[string]int)
+	
+	for _, event := range events {
+		byAction[event.Action]++
+		retryKey := fmt.Sprintf("%d", event.RetryCount)
+		byRetryCount[retryKey]++
+	}
+	
+	return map[string]interface{}{
+		"by_action":      byAction,
+		"by_retry_count": byRetryCount,
+	}
+}
+
 // ========== QUEUE DRAIN SYSTEM ==========
 
 // startQueueDrainSystem initializes health checker and queue drain orchestration.
@@ -1552,11 +1840,24 @@ func drainUserQueue(ctx context.Context, storage store.Store, traktSrv *trakt.Tr
 	startTime := time.Now()
 	successCount := 0
 	failureCount := 0
+	
+	// Track drain start
+	drainStateTracker.RecordDrainStart(userID)
+	defer drainStateTracker.RecordDrainComplete(userID)
 
 	slog.Info("user queue drain starting",
 		"operation", "queue_drain_user_start",
 		"user_id", userID,
 	)
+	
+	// Log to event buffer
+	if queueEventLog != nil {
+		queueEventLog.Append(store.QueueLogEvent{
+			Timestamp: time.Now(),
+			Operation: "queue_drain_user_start",
+			UserID:    userID,
+		})
+	}
 
 	// Drain in batches of 100
 	for {
@@ -1594,6 +1895,18 @@ func drainUserQueue(ctx context.Context, storage store.Store, traktSrv *trakt.Tr
 					"error", err,
 				)
 				failureCount++
+				drainStateTracker.RecordEvent(userID, false)
+				
+				// Log to event buffer
+				if queueEventLog != nil {
+					queueEventLog.Append(store.QueueLogEvent{
+						Timestamp: time.Now(),
+						Operation: "queue_event_failed",
+						UserID:    userID,
+						EventID:   event.ID,
+						Error:     err.Error(),
+					})
+				}
 			} else {
 				slog.Info("queue event scrobbled",
 					"operation", "queue_event_scrobbled",
@@ -1601,6 +1914,17 @@ func drainUserQueue(ctx context.Context, storage store.Store, traktSrv *trakt.Tr
 					"event_id", event.ID,
 				)
 				successCount++
+				drainStateTracker.RecordEvent(userID, true)
+				
+				// Log to event buffer
+				if queueEventLog != nil {
+					queueEventLog.Append(store.QueueLogEvent{
+						Timestamp: time.Now(),
+						Operation: "queue_event_scrobbled",
+						UserID:    userID,
+						EventID:   event.ID,
+					})
+				}
 			}
 
 			// Delete from queue (whether success or permanent failure)
@@ -1712,6 +2036,11 @@ func main() {
 	}
 	apiSf = &singleflight.Group{}
 	traktSrv = trakt.New(config.TraktClientId, config.TraktClientSecret, storage)
+	
+	// Initialize queue monitoring
+	queueEventLog = store.NewQueueEventLog(100)
+	drainStateTracker = NewDrainStateTracker()
+	slog.Info("queue monitoring initialized")
 
 	// Start queue drain system
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1748,6 +2077,12 @@ func main() {
 	router.HandleFunc("/admin/api/users/{id}", getAdminUser).Methods("GET")
 	router.HandleFunc("/admin/api/users/{id}", updateAdminUser).Methods("PUT")
 	router.HandleFunc("/admin/api/users/{id}", deleteAdminUser).Methods("DELETE")
+	
+	// Queue monitoring routes
+	router.HandleFunc("/admin/queue", renderQueueMonitor).Methods("GET")
+	router.HandleFunc("/admin/api/queue/status", getQueueStatus).Methods("GET")
+	router.HandleFunc("/admin/api/queue/events", getQueueEvents).Methods("GET")
+	router.HandleFunc("/admin/api/queue/user/{id}", getUserQueueDetail).Methods("GET")
 	
 	router.HandleFunc("/", renderLandingPage).Methods("GET")
 	listen := os.Getenv("LISTEN")
