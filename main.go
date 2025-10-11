@@ -1903,6 +1903,13 @@ func startQueueDrainSystem(ctx context.Context, storage store.Store, traktSrv *t
 	healthChecker := trakt.NewHealthChecker(traktSrv)
 	stateChan := healthChecker.Start(ctx)
 
+	// Perform initial drain check on startup (don't wait for first health transition)
+	go func() {
+		time.Sleep(2 * time.Second) // Brief delay to let app stabilize
+		slog.Info("performing initial queue drain check on startup")
+		initiateQueueDrain(ctx, storage, traktSrv)
+	}()
+
 	// Listen for health state changes
 	for {
 		select {
