@@ -30,7 +30,7 @@ function updateUI(data) {
   document.getElementById('total-users').textContent = data.system.total_users;
   document.getElementById('active-queues').textContent = data.system.users_with_queues;
   document.getElementById('total-events').textContent = data.system.total_events;
-  document.getElementById('system-mode').textContent = `${data.system.mode.toUpperCase()} 🔴`;
+  document.getElementById('system-mode').textContent = data.system.mode.toUpperCase();
 
   const tbody = document.getElementById('queue-table-body');
 
