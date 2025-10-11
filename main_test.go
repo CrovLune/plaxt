@@ -212,9 +212,10 @@ func TestPersistAuthorizedUserRenewsExistingUser(t *testing.T) {
 	testStore := newPersistTestStore()
 	storage = testStore
 
-	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, tokenExpiry, testStore)
 
-	user, reused, err := persistAuthorizedUser("tester", existing.ID, "newAccess", "newRefresh", nil)
+	user, reused, err := persistAuthorizedUser("tester", existing.ID, "newAccess", "newRefresh", nil, tokenExpiry)
 	assert.NoError(t, err)
 
 	assert.True(t, reused)
@@ -237,9 +238,10 @@ func TestPersistAuthorizedUserAllowsCaseInsensitiveMatch(t *testing.T) {
 	testStore := newPersistTestStore()
 	storage = testStore
 
-	existing := store.NewUser("MixedCaseUser", "oldAccess", "oldRefresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	existing := store.NewUser("MixedCaseUser", "oldAccess", "oldRefresh", nil, tokenExpiry, testStore)
 
-	user, reused, err := persistAuthorizedUser("mixedcaseuser", existing.ID, "newAccess", "newRefresh", nil)
+	user, reused, err := persistAuthorizedUser("mixedcaseuser", existing.ID, "newAccess", "newRefresh", nil, tokenExpiry)
 	assert.NoError(t, err)
 	assert.True(t, reused)
 	if assert.NotNil(t, user) {
@@ -261,9 +263,10 @@ func TestPersistAuthorizedUserCreatesNewWhenIdMismatch(t *testing.T) {
 	testStore := newPersistTestStore()
 	storage = testStore
 
-	other := store.NewUser("other", "oldAccess", "oldRefresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	other := store.NewUser("other", "oldAccess", "oldRefresh", nil, tokenExpiry, testStore)
 
-	user, reused, err := persistAuthorizedUser("tester", other.ID, "newAccess", "newRefresh", nil)
+	user, reused, err := persistAuthorizedUser("tester", other.ID, "newAccess", "newRefresh", nil, tokenExpiry)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, errUsernameMismatch))
 	assert.False(t, reused)
@@ -284,7 +287,8 @@ func TestPersistAuthorizedUserCreatesNewUser(t *testing.T) {
 	storage = testStore
 
 	displayName := "Alice"
-	user, reused, err := persistAuthorizedUser("tester", "", "newAccess", "newRefresh", &displayName)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	user, reused, err := persistAuthorizedUser("tester", "", "newAccess", "newRefresh", &displayName, tokenExpiry)
 	assert.NoError(t, err)
 	assert.False(t, reused)
 	if assert.NotNil(t, user) {
@@ -317,7 +321,8 @@ func TestAuthorizeSuccessRedirectsWithExistingUser(t *testing.T) {
 
 	testStore := newPersistTestStore()
 	storage = testStore
-	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, tokenExpiry, testStore)
 	existingID := existing.ID
 	authStates = newAuthStateStore()
 	corrID := generateCorrelationID()
@@ -396,7 +401,8 @@ func TestAuthorizeSuccessUsesForwardedHeaders(t *testing.T) {
 
 	testStore := newPersistTestStore()
 	storage = testStore
-	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, tokenExpiry, testStore)
 
 	authStates = newAuthStateStore()
 	corrID := generateCorrelationID()
@@ -456,7 +462,8 @@ func TestAuthorizeManualRenewFallsBackToStoredUsername(t *testing.T) {
 
 	testStore := newPersistTestStore()
 	storage = testStore
-	existing := store.NewUser("MixedCaseUser", "oldAccess", "oldRefresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	existing := store.NewUser("MixedCaseUser", "oldAccess", "oldRefresh", nil, tokenExpiry, testStore)
 	existingID := existing.ID
 	authStates = newAuthStateStore()
 	corrID := generateCorrelationID()
@@ -527,7 +534,8 @@ func TestAuthorizeCancellationDoesNotUpdateTokens(t *testing.T) {
 
 	testStore := newPersistTestStore()
 	storage = testStore
-	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, tokenExpiry, testStore)
 	existingID := existing.ID
 	authStates = newAuthStateStore()
 	corrID := generateCorrelationID()
@@ -588,7 +596,8 @@ func TestAuthorizeRequestsManualDisplayNameOnFetchFailure(t *testing.T) {
 
 	testStore := newPersistTestStore()
 	storage = testStore
-	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, tokenExpiry, testStore)
 	authStates = newAuthStateStore()
 	corrID := generateCorrelationID()
 	stateToken := createStateToken(authState{
@@ -724,7 +733,8 @@ func TestAuthorizeWithTraktErrorReturnsDetailedError(t *testing.T) {
 
 	testStore := newPersistTestStore()
 	storage = testStore
-	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	existing := store.NewUser("tester", "oldAccess", "oldRefresh", nil, tokenExpiry, testStore)
 	existingID := existing.ID
 
 	// Mock Trakt returning error details
@@ -787,7 +797,8 @@ func TestPrepareAuthorizePage_OnboardingSuccessShowsWebhookStep(t *testing.T) {
 
 	testStore := newPersistTestStore()
 	storage = testStore
-	user := store.NewUser("tester", "access", "refresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	user := store.NewUser("tester", "access", "refresh", nil, tokenExpiry, testStore)
 
 	req := httptest.NewRequest("GET", "/?result=success&id="+user.ID+"&username=tester", nil)
 	req.Host = "plaxt.test"
@@ -809,7 +820,8 @@ func TestPrepareAuthorizePage_ManualSuccessActivatesResultStep(t *testing.T) {
 
 	testStore := newPersistTestStore()
 	storage = testStore
-	user := store.NewUser("tester", "access", "refresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	user := store.NewUser("tester", "access", "refresh", nil, tokenExpiry, testStore)
 
 	req := httptest.NewRequest("GET", "/?mode=renew&id="+user.ID+"&result=success&username=tester", nil)
 	req.Host = "plaxt.test"
@@ -833,7 +845,8 @@ func TestPrepareAuthorizePage_ManualErrorShowsBanner(t *testing.T) {
 
 	testStore := newPersistTestStore()
 	storage = testStore
-	user := store.NewUser("tester", "access", "refresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	user := store.NewUser("tester", "access", "refresh", nil, tokenExpiry, testStore)
 
 	req := httptest.NewRequest("GET", "/?mode=renew&id="+user.ID+"&result=error&error=boom&username=tester", nil)
 	req.Host = "plaxt.test"
@@ -869,7 +882,8 @@ func TestPrepareAuthorizePage_ManualIncludesDisplayName(t *testing.T) {
 	testStore := newPersistTestStore()
 	storage = testStore
 	display := "Alice Smith"
-	user := store.NewUser("tester", "access", "refresh", &display, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	user := store.NewUser("tester", "access", "refresh", &display, tokenExpiry, testStore)
 
 	req := httptest.NewRequest("GET", "/?mode=renew&id="+user.ID, nil)
 	req.Host = "plaxt.test"
@@ -888,7 +902,8 @@ func TestPrepareAuthorizePage_ManualMarksDisplayNameMissing(t *testing.T) {
 
 	testStore := newPersistTestStore()
 	storage = testStore
-	user := store.NewUser("tester", "access", "refresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	user := store.NewUser("tester", "access", "refresh", nil, tokenExpiry, testStore)
 
 	req := httptest.NewRequest("GET", "/?mode=renew&id="+user.ID+"&display_name_missing=1", nil)
 	req.Host = "plaxt.test"
@@ -911,7 +926,8 @@ func TestUpdateTraktDisplayNameSuccess(t *testing.T) {
 
 	testStore := newPersistTestStore()
 	storage = testStore
-	user := store.NewUser("tester", "access", "refresh", nil, testStore)
+	tokenExpiry := time.Now().Add(90 * 24 * time.Hour)
+	user := store.NewUser("tester", "access", "refresh", nil, tokenExpiry, testStore)
 
 	body := bytes.NewBufferString(`{"display_name":"` + strings.Repeat("Z", common.MaxTraktDisplayNameLength+3) + `"}`)
 	req := httptest.NewRequest("POST", "/users/"+user.ID+"/trakt-display-name", body)
