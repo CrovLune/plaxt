@@ -78,7 +78,7 @@ function updateEventLog(events) {
       <tr>
         <td colspan="5" class="empty-state">
           <div class="empty-state-icon">📋</div>
-          <div>No recent events</div>
+          <div style="color: white;">No recent events</div>
         </td>
       </tr>
     `;
