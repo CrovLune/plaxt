@@ -67,7 +67,11 @@ function updateUI(data) {
 }
 
 function updateEventLog(events) {
-  const logContainer = document.getElementById('event-log');
+  const logContainer = document.getElementById('event-log-body');
+
+  if (!logContainer) {
+    return;
+  }
 
   if (!events || events.length === 0) {
     logContainer.innerHTML = `
