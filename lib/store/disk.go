@@ -41,6 +41,7 @@ func (s DiskStore) WriteUser(user User) {
 	s.writeField(user.ID, "refresh", user.RefreshToken)
 	s.writeField(user.ID, "updated", user.Updated.Format("01-02-2006"))
 	s.writeField(user.ID, "trakt_display_name", user.TraktDisplayName)
+	s.writeField(user.ID, "token_expiry", user.TokenExpiry.Format(time.RFC3339))
 }
 
 // GetUser will load a user from disk
@@ -63,6 +64,15 @@ func (s DiskStore) GetUser(id string) *User {
 	}
 	displayName, _ := s.readField(id, "trakt_display_name")
 	updated, _ := time.Parse("01-02-2006", ud)
+
+	// Default token expiry to 90 days from last update if not set (for legacy users)
+	tokenExpiry := updated.Add(90 * 24 * time.Hour)
+	if expiryStr, err := s.readField(id, "token_expiry"); err == nil && expiryStr != "" {
+		if parsedExpiry, err := time.Parse(time.RFC3339, expiryStr); err == nil {
+			tokenExpiry = parsedExpiry
+		}
+	}
+
 	user := User{
 		ID:               id,
 		Username:         strings.ToLower(un),
@@ -70,6 +80,7 @@ func (s DiskStore) GetUser(id string) *User {
 		RefreshToken:     re,
 		TraktDisplayName: displayName,
 		Updated:          updated,
+		TokenExpiry:      tokenExpiry,
 	}
 
 	return &user
@@ -97,6 +108,7 @@ func (s DiskStore) DeleteUser(id, username string) bool {
 	s.eraseField(id, "access")
 	s.eraseField(id, "refresh")
 	s.eraseField(id, "trakt_display_name")
+	s.eraseField(id, "token_expiry")
 	return true
 }
 

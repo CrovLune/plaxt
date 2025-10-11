@@ -25,13 +25,18 @@ func TestLoadingUser(t *testing.T) {
 	s.HSet("goplaxt:user:id123", "updated", "02-25-2019")
 	s.HSet("goplaxt:user:id123", "trakt_display_name", "Halkeye")
 
+	// When no token_expiry is set, the system applies 90-day fallback from updated date
+	updatedDate := time.Date(2019, 02, 25, 0, 0, 0, 0, time.UTC)
+	expectedExpiry := updatedDate.Add(90 * 24 * time.Hour)
+
 	expected, err := json.Marshal(&User{
 		ID:               "id123",
 		Username:         "halkeye",
 		AccessToken:      "access123",
 		RefreshToken:     "refresh123",
 		TraktDisplayName: "Halkeye",
-		Updated:          time.Date(2019, 02, 25, 0, 0, 0, 0, time.UTC),
+		Updated:          updatedDate,
+		TokenExpiry:      expectedExpiry,
 	})
 	actual, err := json.Marshal(store.GetUser("id123"))
 
@@ -46,6 +51,7 @@ func TestSavingUser(t *testing.T) {
 	defer s.Close()
 
 	store := NewRedisStore(NewRedisClient(s.Addr(), ""))
+	tokenExpiry := time.Date(2019, 05, 25, 0, 0, 0, 0, time.UTC)
 	originalUser := &User{
 		ID:               "id123",
 		Username:         "halkeye",
@@ -53,6 +59,7 @@ func TestSavingUser(t *testing.T) {
 		RefreshToken:     "refresh123",
 		TraktDisplayName: "Halkeye",
 		Updated:          time.Date(2019, 02, 25, 0, 0, 0, 0, time.UTC),
+		TokenExpiry:      tokenExpiry,
 		store:            store,
 	}
 
@@ -63,6 +70,7 @@ func TestSavingUser(t *testing.T) {
 	assert.Equal(t, s.HGet("goplaxt:user:id123", "refresh"), "refresh123")
 	assert.Equal(t, s.HGet("goplaxt:user:id123", "updated"), "02-25-2019")
 	assert.Equal(t, s.HGet("goplaxt:user:id123", "trakt_display_name"), "Halkeye")
+	assert.Equal(t, s.HGet("goplaxt:user:id123", "token_expiry"), tokenExpiry.Format(time.RFC3339))
 
 	expected, err := json.Marshal(originalUser)
 	actual, err := json.Marshal(store.GetUser("id123"))

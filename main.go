@@ -575,6 +575,18 @@ func createAuthState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"state": token})
 }
 
+// calculateTokenExpiry extracts the expires_in value from Trakt OAuth response
+// and calculates the expiration time. Defaults to 3 months if not provided.
+func calculateTokenExpiry(oauthResult map[string]interface{}) time.Time {
+	// Try to get expires_in from the OAuth response
+	if expiresIn, ok := oauthResult["expires_in"].(float64); ok && expiresIn > 0 {
+		return time.Now().Add(time.Duration(expiresIn) * time.Second)
+	}
+
+	// Default to 3 months (Trakt tokens typically last 3 months)
+	return time.Now().Add(90 * 24 * time.Hour)
+}
+
 func authorize(w http.ResponseWriter, r *http.Request) {
 	args := r.URL.Query()
 	stateToken := strings.TrimSpace(args.Get("state"))
@@ -829,7 +841,8 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 		displayNamePrompt = true
 	}
 
-	user, reused, persistErr := persistAuthorizedUser(username, existingID, accessToken, refreshToken, displayNamePointer)
+	tokenExpiry := calculateTokenExpiry(result)
+	user, reused, persistErr := persistAuthorizedUser(username, existingID, accessToken, refreshToken, displayNamePointer, tokenExpiry)
 	if persistErr != nil {
 		errMessage := ""
 		switch  persistErr{
@@ -918,7 +931,7 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	redirectWith(params)
 }
 
-func persistAuthorizedUser(username, existingID, accessToken, refreshToken string, displayName *string) (*store.User, bool, error) {
+func persistAuthorizedUser(username, existingID, accessToken, refreshToken string, displayName *string, tokenExpiry time.Time) (*store.User, bool, error) {
 	if existingID != "" {
 		existing := storage.GetUser(existingID)
 		if existing == nil {
@@ -942,11 +955,11 @@ func persistAuthorizedUser(username, existingID, accessToken, refreshToken strin
 		}
 
 		existing.Username = inputUsername
-		existing.UpdateUser(accessToken, refreshToken, displayName)
+		existing.UpdateUser(accessToken, refreshToken, displayName, tokenExpiry)
 		return existing, true, nil
 	}
 	normalized := strings.ToLower(strings.TrimSpace(username))
-	newUser := store.NewUser(normalized, accessToken, refreshToken, displayName, storage)
+	newUser := store.NewUser(normalized, accessToken, refreshToken, displayName, tokenExpiry, storage)
 	return &newUser, false, nil
 }
 
@@ -1379,14 +1392,16 @@ func api(w http.ResponseWriter, r *http.Request) {
 			return nil, trakt.NewHttpError(http.StatusNotFound, "user not found")
 		}
 
-		tokenAge := time.Since(user.Updated).Hours()
-		if tokenAge > 23 { // tokens expire after 24 hours, so we refresh after 23
-			slog.Info("token refresh request", "username", user.Username, "plaxt_id", user.ID)
+		// Check if token is near expiration (refresh 2 days before expiry)
+		timeUntilExpiry := time.Until(user.TokenExpiry)
+		if timeUntilExpiry < 48*time.Hour {
+			slog.Info("token refresh request", "username", user.Username, "plaxt_id", user.ID, "time_until_expiry", timeUntilExpiry)
 			redirectURI := SelfRoot(r) + "/authorize"
 			result, success := traktSrv.AuthRequest(redirectURI, user.Username, "", user.RefreshToken, "refresh_token")
 			if success {
-				user.UpdateUser(result["access_token"].(string), result["refresh_token"].(string), nil)
-				slog.Info("token refresh success", "username", user.Username, "plaxt_id", user.ID)
+				tokenExpiry := calculateTokenExpiry(result)
+				user.UpdateUser(result["access_token"].(string), result["refresh_token"].(string), nil, tokenExpiry)
+				slog.Info("token refresh success", "username", user.Username, "plaxt_id", user.ID, "new_expiry", tokenExpiry)
 			} else {
 				slog.Warn("token refresh failed", "username", user.Username, "plaxt_id", user.ID)
 				// Do not delete user on transient failure; return 401 so caller can retry later
@@ -1525,11 +1540,13 @@ func listAdminUsers(w http.ResponseWriter, r *http.Request) {
 	root := SelfRoot(r)
 
 	for _, user := range users {
-		tokenAge := time.Since(user.Updated).Hours()
+		// Calculate time until expiry (can be negative if already expired)
+		timeUntilExpiry := time.Until(user.TokenExpiry)
 		status := "healthy"
-		if tokenAge >= 24 {
+
+		if timeUntilExpiry < 0 {
 			status = "expired"
-		} else if tokenAge >= 20 {
+		} else if timeUntilExpiry < 48*time.Hour { // Warn 2 days before expiry
 			status = "warning"
 		}
 
@@ -1539,7 +1556,7 @@ func listAdminUsers(w http.ResponseWriter, r *http.Request) {
 			TraktDisplayName: user.TraktDisplayName,
 			WebhookURL:       fmt.Sprintf("%s/api?id=%s", root, user.ID),
 			Updated:          user.Updated,
-			TokenAge:         tokenAge,
+			TokenAge:         0, // Will be removed from UI
 			Status:           status,
 		})
 	}
@@ -1569,11 +1586,12 @@ func getAdminUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	root := SelfRoot(r)
-	tokenAge := time.Since(user.Updated).Hours()
+	timeUntilExpiry := time.Until(user.TokenExpiry)
 	status := "healthy"
-	if tokenAge >= 24 {
+
+	if timeUntilExpiry < 0 {
 		status = "expired"
-	} else if tokenAge >= 20 {
+	} else if timeUntilExpiry < 48*time.Hour {
 		status = "warning"
 	}
 
@@ -1583,7 +1601,7 @@ func getAdminUser(w http.ResponseWriter, r *http.Request) {
 		TraktDisplayName: user.TraktDisplayName,
 		WebhookURL:       fmt.Sprintf("%s/api?id=%s", root, user.ID),
 		Updated:          user.Updated,
-		TokenAge:         tokenAge,
+		TokenAge:         0, // Will be removed from UI
 		Status:           status,
 	}
 
@@ -2134,10 +2152,11 @@ func main() {
 	apiSf = &singleflight.Group{}
 	webhookCache = newWebhookDedupeCache()
 	traktSrv = trakt.New(config.TraktClientId, config.TraktClientSecret, storage)
-	
+
 	// Initialize queue monitoring
 	queueEventLog = store.NewQueueEventLog(100)
 	drainStateTracker = NewDrainStateTracker()
+	traktSrv.SetQueueEventLog(queueEventLog)
 	slog.Info("queue monitoring initialized")
 
 	// Start queue drain system

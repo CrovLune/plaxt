@@ -21,6 +21,7 @@ type User struct {
 	RefreshToken     string
 	TraktDisplayName string
 	Updated          time.Time
+	TokenExpiry      time.Time // When the access token expires
 	store            store
 }
 
@@ -38,7 +39,8 @@ func uuid() string {
 
 // NewUser creates and persists a new user object with the given tokens.
 // If displayName is provided, it is normalized and truncated to the allowed length.
-func NewUser(username, accessToken, refreshToken string, displayName *string, store store) User {
+// tokenExpiry is the time when the access token expires.
+func NewUser(username, accessToken, refreshToken string, displayName *string, tokenExpiry time.Time, store store) User {
 	id := uuid()
 	var normalizedName string
 	if displayName != nil {
@@ -51,6 +53,7 @@ func NewUser(username, accessToken, refreshToken string, displayName *string, st
 		RefreshToken:     refreshToken,
 		TraktDisplayName: normalizedName,
 		Updated:          time.Now(),
+		TokenExpiry:      tokenExpiry,
 		store:            store,
 	}
 	user.save()
@@ -59,10 +62,12 @@ func NewUser(username, accessToken, refreshToken string, displayName *string, st
 
 // UpdateUser updates the tokens of an existing user. If displayName is provided,
 // it replaces the stored Trakt display name (after normalization/truncation).
-func (user *User) UpdateUser(accessToken, refreshToken string, displayName *string) {
+// tokenExpiry is the time when the access token expires.
+func (user *User) UpdateUser(accessToken, refreshToken string, displayName *string, tokenExpiry time.Time) {
 	user.AccessToken = accessToken
 	user.RefreshToken = refreshToken
 	user.Updated = time.Now()
+	user.TokenExpiry = tokenExpiry
 	if displayName != nil {
 		normalizedName, _ := common.NormalizeDisplayName(*displayName)
 		user.TraktDisplayName = normalizedName

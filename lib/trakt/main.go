@@ -168,6 +168,11 @@ func (t *Trakt) AuthRequest(redirectURI, username, code, refreshToken, grantType
 		return map[string]interface{}{"error": "decode_error", "error_description": err.Error()}, false
 	}
 
+	// Log the expires_in value if present for debugging
+	if expiresIn, ok := result["expires_in"].(float64); ok {
+		slog.Debug("trakt oauth token received", "expires_in_seconds", expiresIn)
+	}
+
 	return result, true
 }
 
@@ -482,7 +487,29 @@ func (t *Trakt) enqueueScrobbleEvent(user store.User, item common.CacheItem, act
 			"action", action,
 			"error", err,
 		)
+		return
 	}
+
+	// Log the enqueue event for monitoring
+	if t.queueEventLog != nil {
+		queueSize, _ := t.storage.GetQueueSize(ctx, user.ID)
+		t.queueEventLog.Append(store.QueueLogEvent{
+			Timestamp:  time.Now(),
+			Operation:  "queue_enqueue",
+			UserID:     user.ID,
+			Username:   user.Username,
+			EventID:    event.ID,
+			QueueSize:  queueSize,
+			RetryCount: 0,
+		})
+	}
+
+	slog.Info("scrobble event queued",
+		"operation", "queue_enqueue",
+		"username", user.Username,
+		"plaxt_id", user.ID,
+		"action", action,
+	)
 }
 
 func (t *Trakt) getAction(hook *plexhooks.Webhook) (action string, item common.CacheItem, progress int) {

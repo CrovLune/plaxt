@@ -84,6 +84,7 @@ func (s RedisStore) WriteUser(user User) {
 	pipe.HSet(ctx, key, "refresh", user.RefreshToken)
 	pipe.HSet(ctx, key, "updated", user.Updated.Format("01-02-2006"))
 	pipe.HSet(ctx, key, "trakt_display_name", user.TraktDisplayName)
+	pipe.HSet(ctx, key, "token_expiry", user.TokenExpiry.Format(time.RFC3339))
 	pipe.Expire(ctx, key, accessTokenTimeout)
 	// a username should always be occupied by the first id binded to it unless it's expired
 	if currentUser == nil {
@@ -109,6 +110,15 @@ func (s RedisStore) GetUser(id string) *User {
 	if err != nil {
 		return nil
 	}
+
+	// Default token expiry to 90 days from last update if not set (for legacy users)
+	tokenExpiry := updated.Add(90 * 24 * time.Hour)
+	if expiryStr, ok := data["token_expiry"]; ok && expiryStr != "" {
+		if parsedExpiry, err := time.Parse(time.RFC3339, expiryStr); err == nil {
+			tokenExpiry = parsedExpiry
+		}
+	}
+
 	user := User{
 		ID:               id,
 		Username:         strings.ToLower(data["username"]),
@@ -116,6 +126,7 @@ func (s RedisStore) GetUser(id string) *User {
 		RefreshToken:     data["refresh"],
 		TraktDisplayName: data["trakt_display_name"],
 		Updated:          updated,
+		TokenExpiry:      tokenExpiry,
 		store:            s,
 	}
 

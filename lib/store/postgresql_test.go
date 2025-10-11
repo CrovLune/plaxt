@@ -16,18 +16,20 @@ func TestPostgresqlLoadingUser(t *testing.T) {
 	}
 	defer db.Close()
 
+	tokenExpiry := time.Date(2019, 05, 25, 0, 0, 0, 0, time.UTC)
 	mock.ExpectQuery(
-		"SELECT username, access, refresh, trakt_display_name, updated FROM users WHERE id=.*",
+		"SELECT username, access, refresh, trakt_display_name, updated, token_expiry FROM users WHERE id=.*",
 	).WithArgs(
 		"id123",
 	).WillReturnRows(
-		sqlmock.NewRows([]string{"username", "access", "refresh", "trakt_display_name", "updated"}).
+		sqlmock.NewRows([]string{"username", "access", "refresh", "trakt_display_name", "updated", "token_expiry"}).
 			AddRow(
 				"halkeye",
 				"access123",
 				"refresh123",
 				"Halkeye",
 				time.Date(2019, 02, 25, 0, 0, 0, 0, time.UTC),
+				tokenExpiry,
 			),
 	)
 
@@ -40,6 +42,7 @@ func TestPostgresqlLoadingUser(t *testing.T) {
 		RefreshToken:     "refresh123",
 		TraktDisplayName: "Halkeye",
 		Updated:          time.Date(2019, 02, 25, 0, 0, 0, 0, time.UTC),
+		TokenExpiry:      tokenExpiry,
 	})
 	actual, _ := json.Marshal(store.GetUser("id123"))
 
@@ -53,15 +56,17 @@ func TestPostgresqlSavingUser(t *testing.T) {
 	}
 	defer db.Close()
 
+	tokenExpiry := time.Date(2019, 05, 25, 0, 0, 0, 0, time.UTC)
 	mock.ExpectExec("INSERT INTO ").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("SELECT").WithArgs("id123").WillReturnRows(
-		sqlmock.NewRows([]string{"username", "access", "refresh", "trakt_display_name", "updated"}).
+		sqlmock.NewRows([]string{"username", "access", "refresh", "trakt_display_name", "updated", "token_expiry"}).
 			AddRow(
 				"halkeye",
 				"access123",
 				"refresh123",
 				"Halkeye",
 				time.Date(2019, 02, 25, 0, 0, 0, 0, time.UTC),
+				tokenExpiry,
 			),
 	)
 
@@ -73,6 +78,7 @@ func TestPostgresqlSavingUser(t *testing.T) {
 		RefreshToken:     "refresh123",
 		TraktDisplayName: "Halkeye",
 		Updated:          time.Date(2019, 02, 25, 0, 0, 0, 0, time.UTC),
+		TokenExpiry:      tokenExpiry,
 		store:            store,
 	}
 
@@ -91,11 +97,13 @@ func TestPostgresqlListUsers(t *testing.T) {
 	}
 	defer db.Close()
 
-	rows := sqlmock.NewRows([]string{"id", "username", "access", "refresh", "trakt_display_name", "updated"}).
-		AddRow("newest", "Alice", "access-new", "refresh-new", "Alice Smith", time.Date(2020, 3, 1, 0, 0, 0, 0, time.UTC)).
-		AddRow("older", "Bob", "access-old", "refresh-old", nil, time.Date(2020, 2, 1, 0, 0, 0, 0, time.UTC))
+	tokenExpiry1 := time.Date(2020, 6, 1, 0, 0, 0, 0, time.UTC)
+	tokenExpiry2 := time.Date(2020, 5, 1, 0, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{"id", "username", "access", "refresh", "trakt_display_name", "updated", "token_expiry"}).
+		AddRow("newest", "Alice", "access-new", "refresh-new", "Alice Smith", time.Date(2020, 3, 1, 0, 0, 0, 0, time.UTC), tokenExpiry1).
+		AddRow("older", "Bob", "access-old", "refresh-old", nil, time.Date(2020, 2, 1, 0, 0, 0, 0, time.UTC), tokenExpiry2)
 
-	mock.ExpectQuery("SELECT id, username, access, refresh, trakt_display_name, updated FROM users ORDER BY updated DESC").
+	mock.ExpectQuery("SELECT id, username, access, refresh, trakt_display_name, updated, token_expiry FROM users ORDER BY updated DESC").
 		WillReturnRows(rows)
 
 	store := NewPostgresqlStore(db)

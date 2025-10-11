@@ -3,6 +3,7 @@ package store
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"crovlune/plaxt/lib/common"
 	"github.com/stretchr/testify/assert"
@@ -19,7 +20,8 @@ func (c *captureStore) WriteUser(u User) {
 func TestNewUserAppliesDisplayNameLimit(t *testing.T) {
 	display := strings.Repeat("x", 60)
 	capture := &captureStore{}
-	user := NewUser("alice", "atk", "rtk", &display, capture)
+	expiry := time.Now().Add(90 * 24 * time.Hour)
+	user := NewUser("alice", "atk", "rtk", &display, expiry, capture)
 
 	assert.Equal(t, "alice", user.Username)
 	assert.Len(t, user.TraktDisplayName, 50)
@@ -29,22 +31,26 @@ func TestNewUserAppliesDisplayNameLimit(t *testing.T) {
 func TestUpdateUserRespectsOptionalDisplayName(t *testing.T) {
 	initialName := "Alice"
 	capture := &captureStore{}
-	user := NewUser("alice", "atk", "rtk", &initialName, capture)
+	expiry := time.Now().Add(90 * 24 * time.Hour)
+	user := NewUser("alice", "atk", "rtk", &initialName, expiry, capture)
 
 	// Nil display name keeps existing value.
-	user.UpdateUser("atk2", "rtk2", nil)
+	newExpiry := time.Now().Add(90 * 24 * time.Hour)
+	user.UpdateUser("atk2", "rtk2", nil, newExpiry)
 	assert.Equal(t, "Alice", user.TraktDisplayName)
 
 	// Providing a shorter name replaces it.
 	newName := "Bob"
-	user.UpdateUser("atk3", "rtk3", &newName)
+	newExpiry2 := time.Now().Add(90 * 24 * time.Hour)
+	user.UpdateUser("atk3", "rtk3", &newName, newExpiry2)
 	assert.Equal(t, "Bob", user.TraktDisplayName)
 	assert.Equal(t, capture.lastUser.TraktDisplayName, "Bob")
 }
 
 func TestUpdateDisplayNameTruncatesAndPreservesTimestamps(t *testing.T) {
 	capture := &captureStore{}
-	user := NewUser("alice", "atk", "rtk", nil, capture)
+	expiry := time.Now().Add(90 * 24 * time.Hour)
+	user := NewUser("alice", "atk", "rtk", nil, expiry, capture)
 	initialUpdated := user.Updated
 	tooLong := strings.Repeat("Z", common.MaxTraktDisplayNameLength+5)
 

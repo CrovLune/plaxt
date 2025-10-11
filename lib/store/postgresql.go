@@ -45,6 +45,11 @@ func NewPostgresqlClient(connStr string) *sql.DB {
 		panic(err)
 	}
 
+	// Add token_expiry column (migration)
+	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS token_expiry timestamp with time zone`); err != nil {
+		panic(err)
+	}
+
 	// Create queued_scrobbles table (migration)
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS queued_scrobbles (
@@ -99,10 +104,10 @@ func (s PostgresqlStore) WriteUser(user User) {
 	_, err := s.db.Exec(
 		`
 			INSERT INTO users
-				(id, username, access, refresh, trakt_display_name, updated)
-				VALUES($1, $2, $3, $4, $5, $6)
+				(id, username, access, refresh, trakt_display_name, updated, token_expiry)
+				VALUES($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT(id)
-			DO UPDATE set username=EXCLUDED.username, access=EXCLUDED.access, refresh=EXCLUDED.refresh, trakt_display_name=EXCLUDED.trakt_display_name, updated=EXCLUDED.updated
+			DO UPDATE set username=EXCLUDED.username, access=EXCLUDED.access, refresh=EXCLUDED.refresh, trakt_display_name=EXCLUDED.trakt_display_name, updated=EXCLUDED.updated, token_expiry=EXCLUDED.token_expiry
 		`,
 		user.ID,
 		user.Username,
@@ -110,6 +115,7 @@ func (s PostgresqlStore) WriteUser(user User) {
 		user.RefreshToken,
 		user.TraktDisplayName,
 		user.Updated,
+		user.TokenExpiry,
 	)
 	if err != nil {
 		panic(err)
@@ -123,9 +129,10 @@ func (s PostgresqlStore) GetUser(id string) *User {
 	var refresh string
 	var updated time.Time
 	var displayName sql.NullString
+	var tokenExpiry sql.NullTime
 
 	err := s.db.QueryRow(
-		"SELECT username, access, refresh, trakt_display_name, updated FROM users WHERE id=$1",
+		"SELECT username, access, refresh, trakt_display_name, updated, token_expiry FROM users WHERE id=$1",
 		id,
 	).Scan(
 		&username,
@@ -133,6 +140,7 @@ func (s PostgresqlStore) GetUser(id string) *User {
 		&refresh,
 		&displayName,
 		&updated,
+		&tokenExpiry,
 	)
 	if err == sql.ErrNoRows {
 		return nil
@@ -140,6 +148,13 @@ func (s PostgresqlStore) GetUser(id string) *User {
 	if err != nil {
 		panic(fmt.Errorf("query error: %v", err))
 	}
+
+	// Default token expiry to 90 days from last update if not set (for legacy users)
+	expiry := updated.Add(90 * 24 * time.Hour)
+	if tokenExpiry.Valid {
+		expiry = tokenExpiry.Time
+	}
+
 	user := User{
 		ID:               id,
 		Username:         strings.ToLower(username),
@@ -147,6 +162,7 @@ func (s PostgresqlStore) GetUser(id string) *User {
 		RefreshToken:     refresh,
 		TraktDisplayName: displayName.String,
 		Updated:          updated,
+		TokenExpiry:      expiry,
 		store:            s,
 	}
 
@@ -177,7 +193,7 @@ func (s PostgresqlStore) DeleteUser(id, username string) bool {
 }
 
 func (s PostgresqlStore) ListUsers() []User {
-	rows, err := s.db.Query(`SELECT id, username, access, refresh, trakt_display_name, updated FROM users ORDER BY updated DESC`)
+	rows, err := s.db.Query(`SELECT id, username, access, refresh, trakt_display_name, updated, token_expiry FROM users ORDER BY updated DESC`)
 	if err != nil {
 		panic(err)
 	}
@@ -186,16 +202,24 @@ func (s PostgresqlStore) ListUsers() []User {
 	users := []User{}
 	for rows.Next() {
 		var (
-			id       string
-			username string
-			access   string
-			refresh  string
-			display  sql.NullString
-			updated  time.Time
+			id          string
+			username    string
+			access      string
+			refresh     string
+			display     sql.NullString
+			updated     time.Time
+			tokenExpiry sql.NullTime
 		)
-		if err := rows.Scan(&id, &username, &access, &refresh, &display, &updated); err != nil {
+		if err := rows.Scan(&id, &username, &access, &refresh, &display, &updated, &tokenExpiry); err != nil {
 			panic(err)
 		}
+
+		// Default token expiry to 90 days from last update if not set (for legacy users)
+		expiry := updated.Add(90 * 24 * time.Hour)
+		if tokenExpiry.Valid {
+			expiry = tokenExpiry.Time
+		}
+
 		user := User{
 			ID:               id,
 			Username:         strings.ToLower(username),
@@ -203,6 +227,7 @@ func (s PostgresqlStore) ListUsers() []User {
 			RefreshToken:     refresh,
 			TraktDisplayName: display.String,
 			Updated:          updated,
+			TokenExpiry:      expiry,
 			store:            s,
 		}
 		users = append(users, user)
