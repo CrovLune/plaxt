@@ -70,20 +70,26 @@
       <div class="table-header">
         <h2>Recent Queue Events</h2>
       </div>
-      <div class="event-log" id="event-log">
-        <div class="event-row event-row--header">
-          <span>Time</span>
-          <span>User</span>
-          <span>Operation</span>
-          <span>Event ID</span>
-          <span>Details</span>
-        </div>
-        <div id="event-log-rows">
-          <div class="empty-state">
-            <div class="empty-state-icon">📋</div>
-            <div>Loading recent events...</div>
-          </div>
-        </div>
+      <div class="table-scroll">
+        <table class="users-table users-table--log" id="event-log">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>User</th>
+              <th>Operation</th>
+              <th>Event ID</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="event-log-body">
+            <tr>
+              <td colspan="5" class="empty-state">
+                <div class="empty-state-icon">📋</div>
+                <div>Loading recent events...</div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>

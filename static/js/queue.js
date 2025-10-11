@@ -67,7 +67,7 @@ function updateUI(data) {
 }
 
 function updateEventLog(events) {
-  const logContainer = document.getElementById('event-log-rows');
+  const logContainer = document.getElementById('event-log-body');
 
   if (!logContainer) {
     return;
@@ -75,22 +75,28 @@ function updateEventLog(events) {
 
   if (!events || events.length === 0) {
     logContainer.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon">📋</div>
-        <div>No recent events</div>
-      </div>
+      <tr>
+        <td colspan="5" class="empty-state">
+          <div class="empty-state-icon">📋</div>
+          <div>No recent events</div>
+        </td>
+      </tr>
     `;
     return;
   }
 
   logContainer.innerHTML = events.map(event => `
-    <div class="event-row">
-      <div class="event-time">${formatTime(event.timestamp)}</div>
-      <div>${escapeHtml(event.username || event.user_id.substring(0, 8))}</div>
-      <div class="event-operation">${formatOperation(event.operation)}</div>
-      <div>${escapeHtml(event.event_id ? event.event_id.substring(0, 8) : '-')}</div>
-      <div style="color: #666;">${escapeHtml(event.error || event.details || '-')}</div>
-    </div>
+    <tr>
+      <td class="event-time">${formatTime(event.timestamp)}</td>
+      <td>
+        ${escapeHtml(event.username || event.user_id.substring(0, 8))}
+      </td>
+      <td class="event-operation">${formatOperation(event.operation)}</td>
+      <td>
+        ${escapeHtml(event.event_id ? event.event_id.substring(0, 8) : '-')}
+      </td>
+      <td class="event-details">${escapeHtml(event.error || event.details || '-')}</td>
+    </tr>
   `).join('');
 }
 
