@@ -6,7 +6,7 @@
     <title>Plaxt</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="/static/img/favicon.png">
-    <link rel="stylesheet" href="{{assetPath 'css/wizard.css'}}">
+    <link rel="stylesheet" href="{{assetPath "css/wizard.css"}}">
   </head>
   <body data-root="{{.SelfRoot}}" data-client-id="{{.ClientID}}" data-mode="{{.Mode}}" data-onboarding-result="{{.Onboarding.Result}}" data-onboarding-username="{{.Onboarding.Username}}" data-manual-result="{{.Manual.Result}}" data-has-manual="{{if .Manual.HasUsers}}true{{else}}false{{end}}" data-manual-display-name="{{.Manual.DisplayName}}" data-manual-display-warning="{{.Manual.DisplayNameWarning}}" data-manual-display-missing="{{if .Manual.DisplayNameMissing}}true{{else}}false{{end}}">
     <div class="wizard-container" id="wizard-root">
