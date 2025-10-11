@@ -6,23 +6,6 @@
   color: #111827;
 }
 
-.event-log-header {
-  display: grid;
-  grid-template-columns: 80px 120px 200px 200px 1fr;
-  padding: 0.75rem 1.5rem;
-  background: #f9fafb;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-  color: #4b5563;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.event-log-body {
-  min-height: 140px;
-}
-
 .event-row {
   display: grid;
   grid-template-columns: 80px 120px 200px 200px 1fr;
@@ -36,6 +19,22 @@
   background: rgba(0, 0, 0, 0.02);
 }
 
+.event-row--header {
+  background: #f9fafb;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  color: #4b5563;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.event-row--header span {
+  color: inherit;
+}
+
 .event-time {
   color: #6b7280;
 }
@@ -45,11 +44,6 @@
 }
 
 @media (max-width: 1024px) {
-  .event-log-header {
-    grid-template-columns: 80px 120px 160px 160px 1fr;
-    padding: 0.75rem 1rem;
-  }
-
   .event-row {
     grid-template-columns: 80px 120px 160px 160px 1fr;
     padding: 0.5rem 1rem;
@@ -60,10 +54,6 @@
   .event-log {
     margin: 0 -1rem;
     padding: 0 1rem;
-  }
-
-  .event-log-header {
-    display: none;
   }
 
   .event-row {
