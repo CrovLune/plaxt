@@ -1,4 +1,4 @@
-const refreshInterval = 5000; // 5 seconds
+const refreshInterval = 5000;
 let lastUpdate = Date.now();
 
 async function fetchQueueStatus() {
@@ -27,13 +27,11 @@ async function fetchQueueEvents() {
 }
 
 function updateUI(data) {
-  // Update summary cards
   document.getElementById('total-users').textContent = data.system.total_users;
   document.getElementById('active-queues').textContent = data.system.users_with_queues;
   document.getElementById('total-events').textContent = data.system.total_events;
   document.getElementById('system-mode').textContent = `${data.system.mode.toUpperCase()} 🔴`;
 
-  // Update user table
   const tbody = document.getElementById('queue-table-body');
 
   if (data.users.length === 0) {
@@ -93,7 +91,6 @@ function updateEventLog(events) {
 }
 
 function formatOperation(op) {
-  // Remove 'queue_' prefix and format
   return op.replace('queue_', '').replace(/_/g, ' ');
 }
 
@@ -120,11 +117,9 @@ function updateLastUpdatedTime() {
     seconds === 0 ? 'Just updated' : `Updated ${seconds}s ago`;
 }
 
-// Initial load
 fetchQueueStatus();
 fetchQueueEvents();
 
-// Auto-refresh
 setInterval(fetchQueueStatus, refreshInterval);
 setInterval(fetchQueueEvents, refreshInterval);
 setInterval(updateLastUpdatedTime, 1000);

@@ -1,6 +1,7 @@
-/* Admin-specific styles */
+#table-content {
+  color: #111827;
+}
 
-/* Action buttons */
 .actions {
   display: flex;
   gap: 0.5rem;
@@ -15,7 +16,15 @@
   background: #2563eb;
 }
 
-/* Modal styles */
+.btn-delete {
+  background: #ef4444;
+  color: white;
+}
+
+.btn-delete:hover {
+  background: #dc2626;
+}
+
 .modal {
   display: none;
   position: fixed;

@@ -1,12 +1,3 @@
-/**
- * Common utility functions shared across admin and queue pages
- */
-
-/**
- * Escapes HTML special characters to prevent XSS
- * @param {string} text - Text to escape
- * @returns {string} - HTML-safe string
- */
 function escapeHtml(text) {
   if (!text) return '';
   const div = document.createElement('div');
@@ -14,11 +5,6 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-/**
- * Formats a duration in seconds to human-readable format
- * @param {number} seconds - Duration in seconds
- * @returns {string} - Formatted duration (e.g., "5m", "2h", "3d")
- */
 function formatAge(seconds) {
   if (!seconds) return '-';
   if (seconds < 60) return `${seconds}s`;
@@ -27,11 +13,6 @@ function formatAge(seconds) {
   return `${Math.floor(seconds / 86400)}d`;
 }
 
-/**
- * Formats a timestamp to relative time or absolute time
- * @param {string} timestamp - ISO timestamp
- * @returns {string} - Formatted time (e.g., "5m ago", "2h ago", or time string)
- */
 function formatTime(timestamp) {
   const date = new Date(timestamp);
   const now = new Date();
@@ -43,11 +24,6 @@ function formatTime(timestamp) {
   return date.toLocaleTimeString();
 }
 
-/**
- * Formats a date string to relative time or absolute date
- * @param {string} dateString - ISO date string
- * @returns {string} - Formatted date (e.g., "5 minutes ago", "2 hours ago", "Jan 15, 2025")
- */
 function formatDate(dateString) {
   const date = new Date(dateString);
   const now = new Date();

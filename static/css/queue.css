@@ -1,11 +1,9 @@
-/* Queue-specific styles */
-
-/* Event log display */
 .event-log {
   max-height: 400px;
   overflow-y: auto;
   font-family: 'Monaco', 'Courier New', monospace;
   font-size: 0.875rem;
+  color: #111827;
 }
 
 .event-row {
@@ -14,6 +12,7 @@
   padding: 0.5rem 1.5rem;
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   align-items: center;
+  color: #111827;
 }
 
 .event-row:hover {

@@ -1,9 +1,7 @@
 let users = [];
 
-// Load users on page load
 document.addEventListener('DOMContentLoaded', () => {
   loadUsers();
-  // Refresh every 30 seconds
   setInterval(loadUsers, 30000);
 });
 
@@ -185,7 +183,6 @@ function formatTokenAge(hours) {
   return `${days} day${days > 1 ? 's' : ''}`;
 }
 
-// Close modals on escape key
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeEditModal();
@@ -193,7 +190,6 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// Close modals on background click
 document.querySelectorAll('.modal').forEach(modal => {
   modal.addEventListener('click', (e) => {
     if (e.target === modal) {
