@@ -36,31 +36,35 @@ import (
 )
 
 var (
-	version    string
-	commit     string
-	date       string
-	storage    store.Store
-	apiSf      *singleflight.Group
-	webhookCache *webhookDedupeCache
-	traktSrv   *trakt.Trakt
-	trustProxy bool = true
+	version       string
+	commit        string
+	date          string
+	storage       store.Store
+	apiSf         *singleflight.Group
+	webhookCache  *webhookDedupeCache
+	traktSrv      *trakt.Trakt
+	trustProxy    bool = true
 	requestLogMod string
-	
+	appAssets     *assetManifest
+	templateFuncs = template.FuncMap{
+		"assetPath": assetPath,
+	}
+
 	// Queue monitoring
-	queueEventLog   *store.QueueEventLog
+	queueEventLog     *store.QueueEventLog
 	drainStateTracker *DrainStateTracker
 )
 
 // webhookDedupeCache prevents rapid-fire duplicate webhook requests
 type webhookDedupeCache struct {
-	mu      sync.RWMutex
-	entries map[string]time.Time
+	mu             sync.RWMutex
+	entries        map[string]time.Time
 	traktScrobbles map[string]time.Time // tracks scrobbles by trakt account
 }
 
 func newWebhookDedupeCache() *webhookDedupeCache {
 	return &webhookDedupeCache{
-		entries: make(map[string]time.Time),
+		entries:        make(map[string]time.Time),
 		traktScrobbles: make(map[string]time.Time),
 	}
 }
@@ -70,21 +74,21 @@ func newWebhookDedupeCache() *webhookDedupeCache {
 func (c *webhookDedupeCache) shouldProcess(plaxtID, traktDisplayName, event, ratingKey string, viewOffset int) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	// Key for this specific plaxt ID + media event
 	specificKey := fmt.Sprintf("%s:%s:%s:%d", plaxtID, event, ratingKey, viewOffset)
 	// Key for this Trakt account + media event (to prevent duplicate scrobbles to same Trakt)
 	traktKey := fmt.Sprintf("TRAKT:%s:%s:%s:%d", traktDisplayName, event, ratingKey, viewOffset)
-	
+
 	now := time.Now()
-	
+
 	// Check if THIS plaxt ID already processed this event recently (within 2 seconds)
 	if lastSeen, exists := c.entries[specificKey]; exists {
 		if time.Since(lastSeen) < 2*time.Second {
 			return false // Same plaxt ID, duplicate within 2 seconds
 		}
 	}
-	
+
 	// Check if this Trakt account already scrobbled this media event recently (within 1 second)
 	// This prevents multiple Plaxt users connected to the same Trakt from duplicate scrobbling
 	if lastSeen, exists := c.traktScrobbles[traktKey]; exists {
@@ -92,11 +96,11 @@ func (c *webhookDedupeCache) shouldProcess(plaxtID, traktDisplayName, event, rat
 			return false // Same Trakt account already scrobbled within 1 second
 		}
 	}
-	
+
 	// Update timestamps
 	c.entries[specificKey] = now
 	c.traktScrobbles[traktKey] = now
-	
+
 	// Clean up old entries (older than 10 seconds) to prevent memory leak
 	cutoff := now.Add(-10 * time.Second)
 	for k, t := range c.entries {
@@ -109,7 +113,7 @@ func (c *webhookDedupeCache) shouldProcess(plaxtID, traktDisplayName, event, rat
 			delete(c.traktScrobbles, k)
 		}
 	}
-	
+
 	return true
 }
 
@@ -845,7 +849,7 @@ func authorize(w http.ResponseWriter, r *http.Request) {
 	user, reused, persistErr := persistAuthorizedUser(username, existingID, accessToken, refreshToken, displayNamePointer, tokenExpiry)
 	if persistErr != nil {
 		errMessage := ""
-		switch  persistErr{
+		switch persistErr {
 		case errUsernameMismatch:
 			errMessage = "Username mismatch. Authorization was for a different Plex user."
 		default:
@@ -965,7 +969,7 @@ func persistAuthorizedUser(username, existingID, accessToken, refreshToken strin
 
 func renderLandingPage(w http.ResponseWriter, r *http.Request) {
 	page := prepareAuthorizePage(r)
-	tmpl := template.Must(template.ParseFiles("static/index.html"))
+	tmpl := template.Must(template.New("index.html").Funcs(templateFuncs).ParseFiles("static/index.html"))
 	if err := tmpl.Execute(w, page); err != nil {
 		slog.Error("failed to render landing page", "error", err)
 	}
@@ -1069,7 +1073,7 @@ func buildOnboardingContext(root string, query url.Values) OnboardingContext {
 		activeIndex = 0
 	default:
 		// Fallback to existing result-based logic for backwards compatibility
-		switch  result{
+		switch result {
 		case "success":
 			activeIndex = 2
 		case "error", "cancelled":
@@ -1417,7 +1421,7 @@ func api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := userInf.(*store.User)
-	
+
 	// Check for duplicate scrobble to same Trakt account
 	if !webhookCache.shouldProcess(id, user.TraktDisplayName, webhook.Event, webhook.Metadata.RatingKey, webhook.Metadata.ViewOffset) {
 		slog.Debug("webhook duplicate filtered", "event", webhook.Event, "username", username, "id", id, "trakt_display_name", user.TraktDisplayName, "rating_key", webhook.Metadata.RatingKey)
@@ -1425,7 +1429,7 @@ func api(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"result": "duplicate_filtered"})
 		return
 	}
-	
+
 	slog.Info("webhook received", "event", webhook.Event, "username", username, "id", id, "type", strings.ToLower(webhook.Metadata.Type), "title", webhook.Metadata.Title, "show", webhook.Metadata.GrandparentTitle, "season", webhook.Metadata.ParentIndex, "episode", webhook.Metadata.Index, "server", webhook.Server.Title, "client", webhook.Player.Title)
 
 	if username == user.Username {
@@ -1703,14 +1707,20 @@ func deleteAdminUser(w http.ResponseWriter, r *http.Request) {
 
 // renderAdminDashboard serves the admin dashboard HTML
 func renderAdminDashboard(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "static/admin.html")
+	tmpl := template.Must(template.New("admin.html").Funcs(templateFuncs).ParseFiles("static/admin.html"))
+	if err := tmpl.Execute(w, nil); err != nil {
+		slog.Error("failed to render admin dashboard", "error", err)
+	}
 }
 
 // ========== QUEUE MONITORING API ==========
 
 // renderQueueMonitor serves the queue monitoring HTML page
 func renderQueueMonitor(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "static/queue.html")
+	tmpl := template.Must(template.New("queue.html").Funcs(templateFuncs).ParseFiles("static/queue.html"))
+	if err := tmpl.Execute(w, nil); err != nil {
+		slog.Error("failed to render queue monitor", "error", err)
+	}
 }
 
 // getQueueStatus returns system-wide queue status
@@ -1721,22 +1731,22 @@ func getQueueStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	
+
 	// Get all users
 	users := storage.ListUsers()
-	
+
 	// Build per-user queue info
 	userInfos := make([]map[string]interface{}, 0, len(users))
 	totalEvents := 0
 	usersWithQueues := 0
-	
+
 	for _, user := range users {
 		queueSize, _ := storage.GetQueueSize(ctx, user.ID)
 		if queueSize > 0 {
 			usersWithQueues++
 			totalEvents += queueSize
 		}
-		
+
 		// Get oldest event for age calculation
 		events, _ := storage.DequeueScrobbles(ctx, user.ID, 1)
 		var oldestTime *time.Time
@@ -1746,14 +1756,14 @@ func getQueueStatus(w http.ResponseWriter, r *http.Request) {
 			oldestAgeSeconds = &age
 			oldestTime = &events[0].CreatedAt
 		}
-		
+
 		// Check if drain is active for this user
 		drainInfo := drainStateTracker.GetUserInfo(user.ID)
 		drainActive := drainInfo != nil
-		
+
 		// Determine status
 		status := determineQueueStatus(queueSize, oldestAgeSeconds, drainActive)
-		
+
 		userInfo := map[string]interface{}{
 			"user_id":            user.ID,
 			"username":           user.Username,
@@ -1762,32 +1772,32 @@ func getQueueStatus(w http.ResponseWriter, r *http.Request) {
 			"status":             status,
 			"drain_active":       drainActive,
 		}
-		
+
 		if oldestAgeSeconds != nil {
 			userInfo["oldest_event_age_seconds"] = *oldestAgeSeconds
 			userInfo["oldest_event_timestamp"] = oldestTime
 		}
-		
+
 		if drainInfo != nil {
 			userInfo["events_processed"] = drainInfo.EventsProcessed
 			userInfo["events_failed"] = drainInfo.EventsFailed
 		}
-		
+
 		userInfos = append(userInfos, userInfo)
 	}
-	
+
 	response := map[string]interface{}{
 		"system": map[string]interface{}{
-			"total_users":         len(users),
-			"users_with_queues":   usersWithQueues,
-			"total_events":        totalEvents,
-			"drain_active":        len(drainStateTracker.GetAllActiveUsers()) > 0,
-			"mode":                drainStateTracker.GetMode(),
-			"last_health_check":   drainStateTracker.GetLastHealthCheck(),
+			"total_users":       len(users),
+			"users_with_queues": usersWithQueues,
+			"total_events":      totalEvents,
+			"drain_active":      len(drainStateTracker.GetAllActiveUsers()) > 0,
+			"mode":              drainStateTracker.GetMode(),
+			"last_health_check": drainStateTracker.GetLastHealthCheck(),
 		},
 		"users": userInfos,
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
@@ -1812,10 +1822,10 @@ func getQueueEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "queue event log unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	
+
 	// Get recent events (default 50)
 	events := queueEventLog.GetRecent(50)
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"events": events,
@@ -1828,33 +1838,33 @@ func getUserQueueDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	
+
 	vars := mux.Vars(r)
 	userID := strings.TrimSpace(vars["id"])
 	if userID == "" {
 		http.Error(w, "missing user id", http.StatusBadRequest)
 		return
 	}
-	
+
 	ctx := r.Context()
-	
+
 	// Get user info
 	user := storage.GetUser(userID)
 	if user == nil {
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
-	
+
 	// Get all queued events for user (up to 100)
 	events, err := storage.DequeueScrobbles(ctx, userID, 100)
 	if err != nil {
 		http.Error(w, "failed to fetch queue", http.StatusInternalServerError)
 		return
 	}
-	
+
 	// Calculate stats
 	stats := calculateQueueStats(events)
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"user_id":            user.ID,
@@ -1870,13 +1880,13 @@ func getUserQueueDetail(w http.ResponseWriter, r *http.Request) {
 func calculateQueueStats(events []store.QueuedScrobbleEvent) map[string]interface{} {
 	byAction := make(map[string]int)
 	byRetryCount := make(map[string]int)
-	
+
 	for _, event := range events {
 		byAction[event.Action]++
 		retryKey := fmt.Sprintf("%d", event.RetryCount)
 		byRetryCount[retryKey]++
 	}
-	
+
 	return map[string]interface{}{
 		"by_action":      byAction,
 		"by_retry_count": byRetryCount,
@@ -1951,7 +1961,7 @@ func drainUserQueue(ctx context.Context, storage store.Store, traktSrv *trakt.Tr
 	startTime := time.Now()
 	successCount := 0
 	failureCount := 0
-	
+
 	// Track drain start
 	drainStateTracker.RecordDrainStart(userID)
 	defer drainStateTracker.RecordDrainComplete(userID)
@@ -1960,7 +1970,7 @@ func drainUserQueue(ctx context.Context, storage store.Store, traktSrv *trakt.Tr
 		"operation", "queue_drain_user_start",
 		"user_id", userID,
 	)
-	
+
 	// Log to event buffer
 	if queueEventLog != nil {
 		queueEventLog.Append(store.QueueLogEvent{
@@ -2007,7 +2017,7 @@ func drainUserQueue(ctx context.Context, storage store.Store, traktSrv *trakt.Tr
 				)
 				failureCount++
 				drainStateTracker.RecordEvent(userID, false)
-				
+
 				// Log to event buffer
 				if queueEventLog != nil {
 					queueEventLog.Append(store.QueueLogEvent{
@@ -2026,7 +2036,7 @@ func drainUserQueue(ctx context.Context, storage store.Store, traktSrv *trakt.Tr
 				)
 				successCount++
 				drainStateTracker.RecordEvent(userID, true)
-				
+
 				// Log to event buffer
 				if queueEventLog != nil {
 					queueEventLog.Append(store.QueueLogEvent{
@@ -2125,6 +2135,7 @@ func isTransientError(err error) bool {
 func main() {
 	// init structured logging
 	logging.Init()
+	appAssets = newAssetManifest("static/dist/manifest.json")
 	// read trust proxy flag
 	trustProxy = true
 	if v := strings.ToLower(strings.TrimSpace(os.Getenv("TRUST_PROXY"))); v != "" {
@@ -2180,27 +2191,27 @@ func main() {
 	} else if os.Getenv("ALLOWED_HOSTNAMES") != "" {
 		router.Use(allowedHostsHandler(os.Getenv("ALLOWED_HOSTNAMES")))
 	}
-	router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	router.PathPrefix("/static/").Handler(cacheStaticFiles(http.StripPrefix("/static/", http.FileServer(http.Dir("static")))))
 	router.HandleFunc("/authorize", authorize).Methods("GET")
 	router.HandleFunc("/manual/authorize", authorize).Methods("GET")
 	router.HandleFunc("/oauth/state", createAuthState).Methods("POST")
 	router.HandleFunc("/api", api).Methods("POST")
 	router.HandleFunc("/users/{id}/trakt-display-name", updateTraktDisplayName).Methods("POST")
 	router.Handle("/healthcheck", healthcheckHandler()).Methods("GET")
-	
+
 	// Admin routes
 	router.HandleFunc("/admin", renderAdminDashboard).Methods("GET")
 	router.HandleFunc("/admin/api/users", listAdminUsers).Methods("GET")
 	router.HandleFunc("/admin/api/users/{id}", getAdminUser).Methods("GET")
 	router.HandleFunc("/admin/api/users/{id}", updateAdminUser).Methods("PUT")
 	router.HandleFunc("/admin/api/users/{id}", deleteAdminUser).Methods("DELETE")
-	
+
 	// Queue monitoring routes
 	router.HandleFunc("/admin/queue", renderQueueMonitor).Methods("GET")
 	router.HandleFunc("/admin/api/queue/status", getQueueStatus).Methods("GET")
 	router.HandleFunc("/admin/api/queue/events", getQueueEvents).Methods("GET")
 	router.HandleFunc("/admin/api/queue/user/{id}", getUserQueueDetail).Methods("GET")
-	
+
 	router.HandleFunc("/", renderLandingPage).Methods("GET")
 	listen := os.Getenv("LISTEN")
 	if listen == "" {
@@ -2213,11 +2224,11 @@ func main() {
 // requestLoggerMiddleware logs method, path, status, and duration for each request.
 func requestLoggerMiddleware() mux.MiddlewareFunc {
 	interesting := map[string]struct{}{
-		"/api":               {},
-		"/authorize":         {},
-		"/manual/authorize":  {},
-		"/oauth/state":       {},
-		"/healthcheck":       {},
+		"/api":              {},
+		"/authorize":        {},
+		"/manual/authorize": {},
+		"/oauth/state":      {},
+		"/healthcheck":      {},
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2262,6 +2273,15 @@ type statusRecorder struct {
 func (sr *statusRecorder) WriteHeader(code int) {
 	sr.status = code
 	sr.ResponseWriter.WriteHeader(code)
+}
+
+func cacheStaticFiles(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/dist/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // recoveryMiddleware logs panics and prevents server crashes by returning 500.

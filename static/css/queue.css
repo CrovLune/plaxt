@@ -1,0 +1,79 @@
+/* Queue-specific styles */
+
+/* Event log display */
+.event-log {
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 0.875rem;
+}
+
+.event-row {
+  display: grid;
+  grid-template-columns: 80px 120px 200px 200px 1fr;
+  padding: 0.5rem 1.5rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  align-items: center;
+}
+
+.event-row:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.event-time {
+  color: #666;
+}
+
+.event-operation {
+  font-weight: 500;
+}
+
+@media (max-width: 1024px) {
+  .event-row {
+    grid-template-columns: 80px 120px 160px 160px 1fr;
+    padding: 0.5rem 1rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .event-log {
+    margin: 0 -1rem;
+    padding: 0 1rem;
+  }
+
+  .event-row {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "time operation"
+      "user context"
+      "details details";
+    row-gap: 0.5rem;
+  }
+
+  .event-row > *:nth-child(1) { grid-area: time; }
+  .event-row > *:nth-child(2) { grid-area: user; }
+  .event-row > *:nth-child(3) { grid-area: operation; }
+  .event-row > *:nth-child(4) { grid-area: context; }
+  .event-row > *:nth-child(5) { grid-area: details; }
+}
+
+@media (max-width: 640px) {
+  .event-log {
+    font-size: 0.813rem;
+  }
+
+  .event-row {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "time"
+      "user"
+      "operation"
+      "context"
+      "details";
+    padding: 0.75rem 1rem;
+  }
+
+  .event-row > * {
+    margin: 0;
+  }
+}

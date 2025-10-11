@@ -2,6 +2,7 @@
 goplaxt
 goplaxt-docker
 dist/
+static/dist/
 *.exe
 *.dll
 *.so
