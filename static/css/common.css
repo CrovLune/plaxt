@@ -294,7 +294,7 @@ body::after {
 .empty-state {
   text-align: center;
   padding: 3rem 1rem;
-  color: #6b7280;
+  color: white;
 }
 
 .empty-state-icon {
