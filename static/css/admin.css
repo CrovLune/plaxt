@@ -1,28 +1,14 @@
+/* Admin Page Styles */
+
+/* Base Overrides */
 #table-content {
   color: #111827;
 }
 
+/* Layout Components */
 .actions {
   display: flex;
   gap: 0.5rem;
-}
-
-.btn-edit {
-  background: #3b82f6;
-  color: white;
-}
-
-.btn-edit:hover {
-  background: #2563eb;
-}
-
-.btn-delete {
-  background: #ef4444;
-  color: white;
-}
-
-.btn-delete:hover {
-  background: #dc2626;
 }
 
 .modal {
@@ -68,6 +54,13 @@
   color: black;
 }
 
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+/* Form Elements */
 .form-group {
   margin-bottom: 1rem;
 }
@@ -93,10 +86,30 @@
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
-.modal-actions {
-  display: flex;
-  gap: 0.75rem;
-  justify-content: flex-end;
+/* Button Styles */
+.btn-edit {
+  background: #3b82f6;
+  color: white;
+}
+
+.btn-edit:hover {
+  background: #2563eb;
+}
+
+.btn-delete {
+  background: #ef4444;
+  color: white;
+}
+
+.btn-delete:hover {
+  background: #dc2626;
+}
+
+/* State Components */
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: white !important;
 }
 
 .empty-state svg {
@@ -104,6 +117,11 @@
   height: 64px;
   margin: 0 auto 1rem;
   opacity: 0.5;
+}
+
+.empty-state-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
 }
 
 .loading {
@@ -120,6 +138,7 @@
   margin-bottom: 1rem;
 }
 
+/* Responsive Design */
 @media (max-width: 768px) {
   .modal-content {
     padding: 1.5rem;

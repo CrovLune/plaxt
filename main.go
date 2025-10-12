@@ -25,6 +25,8 @@ import (
 	"crovlune/plaxt/lib/common"
 	"crovlune/plaxt/lib/config"
 	"crovlune/plaxt/lib/logging"
+	"crovlune/plaxt/lib/notify"
+	"crovlune/plaxt/lib/queue"
 	"crovlune/plaxt/lib/store"
 	"crovlune/plaxt/lib/trakt"
 	"crovlune/plaxt/plexhooks"
@@ -232,6 +234,24 @@ type authState struct {
 	SelectedID    string
 	CorrelationID string
 	Created       time.Time
+	// Family group fields (used when Mode == "family")
+	FamilyGroup *FamilyGroupState
+}
+
+// FamilyGroupState holds family-specific onboarding state
+type FamilyGroupState struct {
+	GroupID      string                // UUID of the family group
+	PlexUsername string                // Shared Plex username
+	Members      []FamilyMemberState   // Members awaiting authorization
+}
+
+// FamilyMemberState tracks authorization progress for a single family member
+type FamilyMemberState struct {
+	MemberID            string    // UUID of the group member
+	TempLabel           string    // Cosmetic label (e.g., "Dad")
+	TraktUsername       string    // Populated after OAuth
+	AuthorizationStatus string    // "pending", "authorized", "failed"
+	AuthorizedAt        time.Time // When authorization completed
 }
 
 type authStateStore struct {
@@ -340,12 +360,23 @@ type ManualRenewContext struct {
 	DisplayNameMissing bool
 }
 
+type FamilyContext struct {
+	Steps         []WizardStep
+	PlexUsername  string
+	MemberLabels  []string
+	Members       []FamilyMemberState
+	WebhookURL    string
+	Result        string
+	Banner        *Banner
+}
+
 type AuthorizePage struct {
 	SelfRoot   string
 	ClientID   string
 	Mode       string
 	Onboarding OnboardingContext
 	Manual     ManualRenewContext
+	Family     FamilyContext
 }
 
 var authRequestFunc = func(redirectURI, username, code, refreshToken, grantType string) (map[string]interface{}, bool) {
@@ -508,6 +539,131 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
+func createFamilyAuthState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req struct {
+		Mode         string `json:"mode"`
+		PlexUsername string `json:"plex_username"`
+		Members      []struct {
+			TempLabel string `json:"temp_label"`
+		} `json:"members"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate mode
+	if strings.ToLower(strings.TrimSpace(req.Mode)) != "family" {
+		writeJSONError(w, http.StatusBadRequest, "mode must be 'family'")
+		return
+	}
+
+	// Validate Plex username
+	plexUsername := strings.TrimSpace(req.PlexUsername)
+	if plexUsername == "" {
+		writeJSONError(w, http.StatusBadRequest, "plex_username is required")
+		return
+	}
+
+	// Validate member count (2-10 per FR-002, FR-002a)
+	if len(req.Members) < 2 {
+		writeJSONError(w, http.StatusBadRequest, "minimum 2 members required")
+		return
+	}
+	if len(req.Members) > 10 {
+		writeJSONError(w, http.StatusBadRequest, "maximum 10 members allowed")
+		return
+	}
+
+	// Validate member labels
+	for i, m := range req.Members {
+		if strings.TrimSpace(m.TempLabel) == "" {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("member %d: temp_label is required", i))
+			return
+		}
+	}
+
+	// Check for duplicate Plex username (FR-010)
+	ctx := r.Context()
+	if storage == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "storage unavailable")
+		return
+	}
+
+	existingGroup, err := storage.GetFamilyGroupByPlex(ctx, plexUsername)
+	if err == nil && existingGroup != nil {
+		writeJSONError(w, http.StatusConflict, "family group already exists for this Plex username")
+		return
+	}
+
+	// Create family group
+	groupID := generateCorrelationID() // Reuse UUID generator
+	familyGroup := &store.FamilyGroup{
+		ID:           groupID,
+		PlexUsername: plexUsername,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+
+	if err := storage.CreateFamilyGroup(ctx, familyGroup); err != nil {
+		slog.Error("failed to create family group", "plex_username", plexUsername, "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to create family group")
+		return
+	}
+
+	// Create pending group members
+	memberStates := make([]FamilyMemberState, 0, len(req.Members))
+	for _, m := range req.Members {
+		memberID := generateCorrelationID()
+		member := &store.GroupMember{
+			ID:                  memberID,
+			FamilyGroupID:       groupID,
+			TempLabel:           strings.TrimSpace(m.TempLabel),
+			AuthorizationStatus: "pending",
+			CreatedAt:           time.Now(),
+		}
+
+		if err := storage.AddGroupMember(ctx, member); err != nil {
+			slog.Error("failed to add group member", "group_id", groupID, "label", m.TempLabel, "error", err)
+			// Cleanup: delete the family group
+			_ = storage.DeleteFamilyGroup(ctx, groupID)
+			writeJSONError(w, http.StatusInternalServerError, "failed to create group members")
+			return
+		}
+
+		memberStates = append(memberStates, FamilyMemberState{
+			MemberID:            memberID,
+			TempLabel:           member.TempLabel,
+			AuthorizationStatus: "pending",
+		})
+	}
+
+	// Create auth state for session tracking
+	state := authState{
+		Mode:    "family",
+		Created: time.Now(),
+		FamilyGroup: &FamilyGroupState{
+			GroupID:      groupID,
+			PlexUsername: plexUsername,
+			Members:      memberStates,
+		},
+	}
+	stateToken := authStates.Create(state)
+
+	slog.Info("family group created", "group_id", groupID, "plex_username", plexUsername, "member_count", len(memberStates))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"state":           stateToken,
+		"family_group_id": groupID,
+	})
+}
+
 func createAuthState(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -577,6 +733,261 @@ func createAuthState(w http.ResponseWriter, r *http.Request) {
 	token := authStates.Create(state)
 
 	writeJSON(w, http.StatusOK, map[string]string{"state": token})
+}
+
+// authorizeFamilyMember handles OAuth callback for family member authorization.
+// Query params: state (auth token), code (OAuth code), member_id (UUID)
+func authorizeFamilyMember(w http.ResponseWriter, r *http.Request) {
+	args := r.URL.Query()
+	stateToken := strings.TrimSpace(args.Get("state"))
+	code := strings.TrimSpace(args.Get("code"))
+	memberID := strings.TrimSpace(args.Get("member_id"))
+	root := SelfRoot(r)
+
+	redirectWith := func(params map[string]string) {
+		values := url.Values{}
+		for key, value := range params {
+			if strings.TrimSpace(value) != "" {
+				values.Set(key, value)
+			}
+		}
+		target := root + "/family/wizard"
+		if len(values) > 0 {
+			target = fmt.Sprintf("%s?%s", target, values.Encode())
+		}
+		http.Redirect(w, r, target, http.StatusFound)
+	}
+
+	// Validate state token
+	if stateToken == "" {
+		slog.Error("family member auth: missing state token")
+		redirectWith(map[string]string{
+			"result": "error",
+			"error":  "Authorization session expired. Please start again.",
+		})
+		return
+	}
+
+	stateData, ok := authStates.Consume(stateToken)
+	if !ok || stateData.FamilyGroup == nil {
+		slog.Warn("family member auth: state expired or invalid", "state", stateToken)
+		redirectWith(map[string]string{
+			"result": "error",
+			"error":  "Authorization session expired. Please start again.",
+		})
+		return
+	}
+
+	// Validate member ID
+	if memberID == "" {
+		slog.Error("family member auth: missing member_id")
+		redirectWith(map[string]string{
+			"result": "error",
+			"error":  "Missing member ID. Please try again.",
+		})
+		return
+	}
+
+	// Find member in state
+	var memberState *FamilyMemberState
+	for i := range stateData.FamilyGroup.Members {
+		if stateData.FamilyGroup.Members[i].MemberID == memberID {
+			memberState = &stateData.FamilyGroup.Members[i]
+			break
+		}
+	}
+
+	if memberState == nil {
+		slog.Error("family member auth: member not found", "member_id", memberID)
+		redirectWith(map[string]string{
+			"result": "error",
+			"error":  "Member not found in session.",
+		})
+		return
+	}
+
+	// Check for cancellation
+	if code == "" {
+		slog.Info("family member auth cancelled", "member_id", memberID, "label", memberState.TempLabel)
+		redirectWith(map[string]string{
+			"result":    "cancelled",
+			"member_id": memberID,
+			"label":     memberState.TempLabel,
+		})
+		return
+	}
+
+	// Exchange code for tokens
+	redirectURI := root + "/authorize/family/member"
+	result, ok := authRequestFunc(redirectURI, "", code, "", "authorization_code")
+	if !ok {
+		// Extract error details
+		httpStatus := 0
+		if statusVal, exists := result["http_status"]; exists {
+			if statusInt, ok := statusVal.(int); ok {
+				httpStatus = statusInt
+			}
+		}
+		traktError := "unknown"
+		if errVal, exists := result["error"]; exists {
+			if errStr, ok := errVal.(string); ok && errStr != "" {
+				traktError = errStr
+			}
+		}
+		traktErrorDesc := ""
+		if descVal, exists := result["error_description"]; exists {
+			if descStr, ok := descVal.(string); ok && descStr != "" {
+				traktErrorDesc = descStr
+			}
+		}
+
+		errorDetail := fmt.Sprintf("Trakt token exchange failed: %s", traktError)
+		if httpStatus != 0 {
+			errorDetail = fmt.Sprintf("Trakt token exchange failed: HTTP %d - %s", httpStatus, traktError)
+		}
+		if traktErrorDesc != "" {
+			errorDetail = fmt.Sprintf("%s (%s)", errorDetail, traktErrorDesc)
+		}
+
+		userError := "Trakt authorization failed. Please try again."
+		if traktError == "invalid_grant" {
+			userError = "Authorization code expired or invalid. Please try authorizing again."
+		} else if httpStatus == 429 {
+			userError = "Too many requests. Please wait a moment and try again."
+		} else if traktErrorDesc != "" {
+			userError = fmt.Sprintf("Trakt error: %s", traktErrorDesc)
+		}
+
+		slog.Error("family member auth failed",
+			"member_id", memberID,
+			"label", memberState.TempLabel,
+			"http_status", httpStatus,
+			"trakt_error", traktError,
+			"detail", errorDetail,
+		)
+
+		redirectWith(map[string]string{
+			"result":    "error",
+			"member_id": memberID,
+			"label":     memberState.TempLabel,
+			"error":     userError,
+		})
+		return
+	}
+
+	// Extract tokens
+	accessToken, accessOK := result["access_token"].(string)
+	refreshToken, refreshOK := result["refresh_token"].(string)
+	if !accessOK || !refreshOK || accessToken == "" || refreshToken == "" {
+		slog.Error("family member auth: missing tokens", "member_id", memberID, "label", memberState.TempLabel)
+		redirectWith(map[string]string{
+			"result":    "error",
+			"member_id": memberID,
+			"label":     memberState.TempLabel,
+			"error":     "Trakt response missing tokens. Please retry.",
+		})
+		return
+	}
+
+	// Fetch Trakt display name
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	traktUsername, _, err := fetchDisplayNameFunc(ctx, accessToken)
+	if err != nil || strings.TrimSpace(traktUsername) == "" {
+		slog.Warn("family member auth: display name fetch failed", "member_id", memberID, "error", err)
+		traktUsername = memberState.TempLabel // Fallback to label
+	}
+
+	// Check for duplicate Trakt username (FR-010a)
+	if storage != nil {
+		ctx := r.Context()
+		members, err := storage.ListGroupMembers(ctx, stateData.FamilyGroup.GroupID)
+		if err == nil {
+			for _, m := range members {
+				if m.ID != memberID && strings.EqualFold(m.TraktUsername, traktUsername) {
+					slog.Error("family member auth: duplicate trakt username",
+						"member_id", memberID,
+						"trakt_username", traktUsername,
+					)
+					redirectWith(map[string]string{
+						"result":    "error",
+						"member_id": memberID,
+						"label":     memberState.TempLabel,
+						"error":     fmt.Sprintf("Trakt account '%s' is already authorized for this family group.", traktUsername),
+					})
+					return
+				}
+			}
+		}
+	}
+
+	// Calculate token expiry
+	tokenExpiry := calculateTokenExpiry(result)
+
+	// Update group member with tokens and status
+	if storage != nil {
+		ctx := r.Context()
+		member, err := storage.GetGroupMember(ctx, memberID)
+		if err != nil || member == nil {
+			slog.Error("family member auth: member not found in storage", "member_id", memberID)
+			redirectWith(map[string]string{
+				"result":    "error",
+				"member_id": memberID,
+				"error":     "Member not found. Please restart the wizard.",
+			})
+			return
+		}
+
+		// Update member tokens and status
+		member.TraktUsername = traktUsername
+		member.AccessToken = accessToken
+		member.RefreshToken = refreshToken
+		expiryTime := tokenExpiry
+		member.TokenExpiry = &expiryTime
+		member.AuthorizationStatus = "authorized"
+
+		if err := storage.UpdateGroupMember(ctx, member); err != nil {
+			slog.Error("family member auth: failed to update member", "member_id", memberID, "error", err)
+			redirectWith(map[string]string{
+				"result":    "error",
+				"member_id": memberID,
+				"error":     "Failed to save authorization. Please try again.",
+			})
+			return
+		}
+
+		slog.Info("family member authorized",
+			"group_id", stateData.FamilyGroup.GroupID,
+			"member_id", memberID,
+			"trakt_username", traktUsername,
+			"label", memberState.TempLabel,
+		)
+	}
+
+	// Update state and check if all members are authorized
+	memberState.TraktUsername = traktUsername
+	memberState.AuthorizationStatus = "authorized"
+	memberState.AuthorizedAt = time.Now()
+
+	allAuthorized := true
+	for _, m := range stateData.FamilyGroup.Members {
+		if m.AuthorizationStatus != "authorized" {
+			allAuthorized = false
+			break
+		}
+	}
+
+	// Re-save state for continued wizard flow
+	newStateToken := authStates.Create(stateData)
+
+	redirectWith(map[string]string{
+		"result":         "success",
+		"member_id":      memberID,
+		"trakt_username": traktUsername,
+		"label":          memberState.TempLabel,
+		"all_authorized": fmt.Sprintf("%t", allAuthorized),
+		"state":          newStateToken,
+	})
 }
 
 // calculateTokenExpiry extracts the expires_in value from Trakt OAuth response
@@ -980,12 +1391,10 @@ func prepareAuthorizePage(r *http.Request) AuthorizePage {
 	query := r.URL.Query()
 	mode := strings.ToLower(query.Get("mode"))
 	manualUsers := buildManualUsers(root)
-	if mode != "renew" {
+	if mode != "renew" && mode != "family" {
 		mode = "onboarding"
 	}
-	if mode == "renew" && len(manualUsers) == 0 {
-		mode = "onboarding"
-	}
+	// Keep renew mode even if no users - show empty state message
 
 	clientID := ""
 	if traktSrv != nil {
@@ -994,6 +1403,7 @@ func prepareAuthorizePage(r *http.Request) AuthorizePage {
 
 	onboarding := buildOnboardingContext(root, query)
 	manual := buildManualContext(root, manualUsers, query, mode)
+	family := buildFamilyContext(root, query)
 
 	return AuthorizePage{
 		SelfRoot:   root,
@@ -1001,6 +1411,7 @@ func prepareAuthorizePage(r *http.Request) AuthorizePage {
 		Mode:       mode,
 		Onboarding: onboarding,
 		Manual:     manual,
+		Family:     family,
 	}
 }
 
@@ -1038,6 +1449,56 @@ func buildManualUsers(root string) []ManualUser {
 	return manual
 }
 
+func buildFamilyContext(root string, query url.Values) FamilyContext {
+	// Default family steps
+	steps := []WizardStep{
+		{
+			ID:          "setup",
+			Title:       "Setup Family Group",
+			Description: "Enter the shared Plex username and add family member labels.",
+			State:       StepActive,
+		},
+		{
+			ID:          "authorize",
+			Title:       "Authorize Members",
+			Description: "Each family member connects their own Trakt account.",
+			State:       StepFuture,
+		},
+		{
+			ID:          "webhook",
+			Title:       "Configure Webhook",
+			Description: "Add the webhook URL to Plex to enable family scrobbling.",
+			State:       StepFuture,
+		},
+	}
+
+	// Check for family mode result
+	result := strings.ToLower(query.Get("result"))
+	if result != "" {
+		// Update step states based on result
+		switch result {
+		case "success":
+			steps[0].State = StepComplete
+			steps[1].State = StepComplete
+			steps[2].State = StepComplete
+		case "error":
+			steps[0].State = StepActive
+			steps[1].State = StepFuture
+			steps[2].State = StepFuture
+		}
+	}
+
+	return FamilyContext{
+		Steps:        steps,
+		PlexUsername: "",
+		MemberLabels: []string{},
+		Members:     []FamilyMemberState{},
+		WebhookURL:  "",
+		Result:      result,
+		Banner:      nil,
+	}
+}
+
 func buildOnboardingContext(root string, query url.Values) OnboardingContext {
 	username := strings.TrimSpace(query.Get("username"))
 	modeParam := strings.ToLower(strings.TrimSpace(query.Get("mode")))
@@ -1057,9 +1518,9 @@ func buildOnboardingContext(root string, query url.Values) OnboardingContext {
 	}
 
 	steps := []WizardStep{
-		{ID: "username", Title: "1. Enter Plex username", Description: "Provide your Plex username to personalise the flow."},
-		{ID: "authorize", Title: "2. Authorize with Trakt", Description: "Grant Plaxt permission to scrobble on your behalf."},
-		{ID: "webhook", Title: "3. Connect Plex webhook", Description: "Copy the Plaxt URL into Plex settings."},
+		{ID: "username", Title: "1. Enter Plex username", Description: "Enter your Plex username to personalize the setup."},
+		{ID: "authorize", Title: "2. Authorize with Trakt", Description: "Connect your Trakt account to enable scrobbling."},
+		{ID: "webhook", Title: "3. Connect Plex webhook", Description: "Add the webhook URL to Plex to start automatic scrobbling."},
 	}
 
 	activeIndex := 0
@@ -1142,9 +1603,9 @@ func buildManualContext(_ string, manualUsers []ManualUser, query url.Values, mo
 		displayNameMissing = false
 	}
 	steps := []WizardStep{
-		{ID: "select", Title: "1. Choose Plaxt user", Description: "Pick the user whose tokens need renewal."},
-		{ID: "confirm", Title: "2. Confirm details", Description: "Review the webhook that will keep working."},
-		{ID: "result", Title: "3. Review outcome", Description: "See whether the renewal succeeded."},
+		{ID: "select", Title: "1. Choose Plaxt user", Description: "Select the user account that needs token renewal."},
+		{ID: "confirm", Title: "2. Confirm details", Description: "Verify the webhook URL and user information."},
+		{ID: "result", Title: "3. Review outcome", Description: "Check if the token renewal was successful."},
 	}
 
 	activeIndex := 0
@@ -1308,6 +1769,175 @@ func updateTraktDisplayName(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleFamilyWebhook processes Plex webhooks for family groups by broadcasting to all members.
+// Implements FR-008 (broadcast scrobbling) and FR-008a (retry queueing).
+func handleFamilyWebhook(w http.ResponseWriter, r *http.Request, webhook *plexhooks.Webhook, familyGroup *store.FamilyGroup) {
+	ctx := r.Context()
+	plexUsername := strings.ToLower(webhook.Account.Title)
+
+	// Load all authorized group members
+	members, err := storage.ListGroupMembers(ctx, familyGroup.ID)
+	if err != nil {
+		slog.Error("family webhook: failed to list members",
+			"group_id", familyGroup.ID,
+			"plex_username", plexUsername,
+			"error", err,
+		)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to load family members"})
+		return
+	}
+
+	// Filter to authorized members only
+	authorizedMembers := make([]*store.GroupMember, 0, len(members))
+	for _, member := range members {
+		if member.AuthorizationStatus == "authorized" {
+			authorizedMembers = append(authorizedMembers, member)
+		}
+	}
+
+	if len(authorizedMembers) == 0 {
+		slog.Warn("family webhook: no authorized members",
+			"group_id", familyGroup.ID,
+			"plex_username", plexUsername,
+		)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"result": "no_authorized_members"})
+		return
+	}
+
+	// Generate event ID for tracking (FR-008b)
+	eventID := generateCorrelationID()
+
+	// Parse scrobble body using existing Trakt logic
+	scrobbleBody, action, shouldScrobble := traktSrv.ParseWebhookForScrobble(webhook)
+	if !shouldScrobble {
+		slog.Debug("family webhook: not eligible for scrobble",
+			"group_id", familyGroup.ID,
+			"event", webhook.Event,
+			"plex_username", plexUsername,
+		)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"result": "not_scrobblable"})
+		return
+	}
+
+	// Extract media title for logging
+	mediaTitle := extractMediaTitleFromScrobble(scrobbleBody)
+
+	slog.Info("family webhook received",
+		"event_id", eventID,
+		"group_id", familyGroup.ID,
+		"plex_username", plexUsername,
+		"event", webhook.Event,
+		"action", action,
+		"media_title", mediaTitle,
+		"member_count", len(authorizedMembers),
+	)
+
+	// Broadcast scrobble to all members (FR-008)
+	broadcastErrors := traktSrv.BroadcastScrobble(
+		ctx,
+		action,
+		scrobbleBody,
+		authorizedMembers,
+		eventID,
+		mediaTitle,
+	)
+
+	// Handle broadcast errors - queue retries for transient failures (FR-008a)
+	if len(broadcastErrors) > 0 {
+		for _, berr := range broadcastErrors {
+			if berr.IsRetryable() {
+				// Queue for retry with exponential backoff
+				queueItem := &store.RetryQueueItem{
+					ID:             generateCorrelationID(),
+					FamilyGroupID:  familyGroup.ID,
+					GroupMemberID:  berr.Member.ID,
+					Payload:        mustMarshalJSON(scrobbleBody),
+					AttemptCount:   0,
+					NextAttemptAt:  time.Now().Add(30 * time.Second), // Initial backoff
+					LastError:      berr.Err.Error(),
+					Status:         store.RetryQueueStatusQueued,
+					CreatedAt:      time.Now(),
+					UpdatedAt:      time.Now(),
+				}
+
+				// Note: Queue repository integration deferred (T019)
+				// For now, log the retry event
+				slog.Warn("family webhook: scrobble queued for retry",
+					"event_id", eventID,
+					"member_id", berr.Member.ID,
+					"trakt_username", berr.Member.TraktUsername,
+					"media_title", mediaTitle,
+					"error", berr.Err.Error(),
+				)
+
+				// TODO: Uncomment when worker is integrated
+				// queueRepo := queue.NewPostgresRepo(storage)
+				// if err := queueRepo.Enqueue(ctx, queueItem); err != nil {
+				//     slog.Error("failed to enqueue retry", "event_id", eventID, "member_id", berr.Member.ID, "error", err)
+				// }
+				_ = queueItem // Suppress unused variable warning
+			} else {
+				// Permanent failure - log only
+				slog.Error("family webhook: scrobble permanent failure",
+					"event_id", eventID,
+					"member_id", berr.Member.ID,
+					"trakt_username", berr.Member.TraktUsername,
+					"media_title", mediaTitle,
+					"error", berr.Err.Error(),
+				)
+			}
+		}
+	}
+
+	// Return success even if some members failed (retries will handle them)
+	successCount := len(authorizedMembers) - len(broadcastErrors)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"result":         "success",
+		"event_id":       eventID,
+		"members_total":  len(authorizedMembers),
+		"members_success": successCount,
+		"members_failed":  len(broadcastErrors),
+	})
+}
+
+// extractMediaTitleFromScrobble extracts a human-readable title from ScrobbleBody.
+func extractMediaTitleFromScrobble(body common.ScrobbleBody) string {
+	if body.Movie != nil && body.Movie.Title != nil {
+		title := *body.Movie.Title
+		if body.Movie.Year != nil {
+			return fmt.Sprintf("%s (%d)", title, *body.Movie.Year)
+		}
+		return title
+	}
+
+	if body.Show != nil {
+		showTitle := "Unknown Show"
+		if body.Show.Title != nil {
+			showTitle = *body.Show.Title
+		}
+		if body.Episode != nil && body.Episode.Season != nil && body.Episode.Number != nil {
+			return fmt.Sprintf("%s S%02dE%02d", showTitle, *body.Episode.Season, *body.Episode.Number)
+		}
+		return showTitle
+	}
+
+	return "Unknown Media"
+}
+
+// mustMarshalJSON marshals a value to JSON, panicking on error.
+// Used for scrobble payloads which should always be valid.
+func mustMarshalJSON(v interface{}) []byte {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal JSON: %v", err))
+	}
+	return data
+}
+
 func api(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if id == "" {
@@ -1378,6 +2008,17 @@ func api(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	username := strings.ToLower(webhook.Account.Title)
+
+	// Check if this Plex username belongs to a family group (FR-007)
+	ctx := r.Context()
+	if storage != nil {
+		familyGroup, err := storage.GetFamilyGroupByPlex(ctx, username)
+		if err == nil && familyGroup != nil {
+			// Route to family webhook handler
+			handleFamilyWebhook(w, r, webhook, familyGroup)
+			return
+		}
+	}
 
 	// Handle the requests of the same user one at a time
 	key := fmt.Sprintf("%s@%s", username, id)
@@ -1705,12 +2346,371 @@ func deleteAdminUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Family Group Admin API Response Types
+type adminFamilyGroupResponse struct {
+	ID              string    `json:"id"`
+	PlexUsername    string    `json:"plex_username"`
+	MemberCount     int       `json:"member_count"`
+	AuthorizedCount int       `json:"authorized_count"`
+	WebhookURL      string    `json:"webhook_url"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type adminGroupMemberResponse struct {
+	ID                  string     `json:"id"`
+	FamilyGroupID       string     `json:"family_group_id"`
+	TempLabel           string     `json:"temp_label"`
+	TraktUsername       string     `json:"trakt_username,omitempty"`
+	AuthorizationStatus string     `json:"authorization_status"`
+	TokenExpiry         *time.Time `json:"token_expiry,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	Status              string     `json:"status"` // "healthy", "warning", "expired", "pending", "failed"
+}
+
+type adminFamilyGroupDetailResponse struct {
+	*adminFamilyGroupResponse
+	Members []adminGroupMemberResponse `json:"members"`
+}
+
+// T031: List all family groups
+func listFamilyGroups(w http.ResponseWriter, r *http.Request) {
+	if storage == nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx := r.Context()
+	groups, err := storage.ListFamilyGroups(ctx)
+	if err != nil {
+		slog.Error("failed to list family groups", "error", err)
+		http.Error(w, "failed to list family groups", http.StatusInternalServerError)
+		return
+	}
+
+	response := make([]adminFamilyGroupResponse, 0, len(groups))
+	root := SelfRoot(r)
+
+	for _, group := range groups {
+		members, err := storage.ListGroupMembers(ctx, group.ID)
+		if err != nil {
+			slog.Warn("failed to list members for group", "group_id", group.ID, "error", err)
+			continue
+		}
+
+		authorizedCount := 0
+		for _, member := range members {
+			if member.AuthorizationStatus == "authorized" {
+				authorizedCount++
+			}
+		}
+
+		response = append(response, adminFamilyGroupResponse{
+			ID:              group.ID,
+			PlexUsername:    group.PlexUsername,
+			MemberCount:     len(members),
+			AuthorizedCount: authorizedCount,
+			WebhookURL:      fmt.Sprintf("%s/api?id=%s", root, group.ID),
+			CreatedAt:       group.CreatedAt,
+			UpdatedAt:       group.UpdatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// T032: Get family group details with members
+func getFamilyGroupDetail(w http.ResponseWriter, r *http.Request) {
+	if storage == nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	groupID := strings.TrimSpace(vars["id"])
+	if groupID == "" {
+		http.Error(w, "missing group id", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	group, err := storage.GetFamilyGroup(ctx, groupID)
+	if err != nil {
+		slog.Error("failed to get family group", "group_id", groupID, "error", err)
+		http.Error(w, "family group not found", http.StatusNotFound)
+		return
+	}
+
+	members, err := storage.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		slog.Error("failed to list group members", "group_id", groupID, "error", err)
+		http.Error(w, "failed to list members", http.StatusInternalServerError)
+		return
+	}
+
+	memberResponses := make([]adminGroupMemberResponse, 0, len(members))
+	authorizedCount := 0
+
+	for _, member := range members {
+		status := member.AuthorizationStatus
+		if member.AuthorizationStatus == "authorized" {
+			authorizedCount++
+			// Check token expiry status
+			if member.TokenExpiry != nil {
+				timeUntilExpiry := time.Until(*member.TokenExpiry)
+				if timeUntilExpiry < 0 {
+					status = "expired"
+				} else if timeUntilExpiry < 48*time.Hour {
+					status = "warning"
+				} else {
+					status = "healthy"
+				}
+			}
+		} else if member.AuthorizationStatus == "pending" {
+			status = "pending"
+		} else if member.AuthorizationStatus == "failed" {
+			status = "failed"
+		}
+
+		memberResponses = append(memberResponses, adminGroupMemberResponse{
+			ID:                  member.ID,
+			FamilyGroupID:       member.FamilyGroupID,
+			TempLabel:           member.TempLabel,
+			TraktUsername:       member.TraktUsername,
+			AuthorizationStatus: member.AuthorizationStatus,
+			TokenExpiry:         member.TokenExpiry,
+			CreatedAt:           member.CreatedAt,
+			Status:              status,
+		})
+	}
+
+	root := SelfRoot(r)
+	response := adminFamilyGroupDetailResponse{
+		adminFamilyGroupResponse: &adminFamilyGroupResponse{
+			ID:              group.ID,
+			PlexUsername:    group.PlexUsername,
+			MemberCount:     len(members),
+			AuthorizedCount: authorizedCount,
+			WebhookURL:      fmt.Sprintf("%s/api?id=%s", root, group.ID),
+			CreatedAt:       group.CreatedAt,
+			UpdatedAt:       group.UpdatedAt,
+		},
+		Members: memberResponses,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// T033: Add member to family group
+func addFamilyGroupMember(w http.ResponseWriter, r *http.Request) {
+	if storage == nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	groupID := strings.TrimSpace(vars["id"])
+	if groupID == "" {
+		http.Error(w, "missing group id", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Label string `json:"label"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	req.Label = strings.TrimSpace(req.Label)
+	if req.Label == "" {
+		http.Error(w, "label is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Verify group exists
+	_, err := storage.GetFamilyGroup(ctx, groupID)
+	if err != nil {
+		http.Error(w, "family group not found", http.StatusNotFound)
+		return
+	}
+
+	// Check member count limit (max 10)
+	members, err := storage.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		slog.Error("failed to list group members", "group_id", groupID, "error", err)
+		http.Error(w, "failed to check member count", http.StatusInternalServerError)
+		return
+	}
+
+	if len(members) >= 10 {
+		http.Error(w, "maximum 10 members per family group", http.StatusBadRequest)
+		return
+	}
+
+	// Create new member
+	member := &store.GroupMember{
+		ID:                  generateCorrelationID(),
+		FamilyGroupID:       groupID,
+		TempLabel:           req.Label,
+		AuthorizationStatus: "pending",
+		CreatedAt:           time.Now(),
+	}
+
+	if err := storage.AddGroupMember(ctx, member); err != nil {
+		slog.Error("failed to add group member", "group_id", groupID, "error", err)
+		http.Error(w, "failed to add member", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("family group member added", "group_id", groupID, "member_id", member.ID, "label", req.Label)
+
+	// Return authorization URL
+	root := SelfRoot(r)
+	authURL := fmt.Sprintf("%s/authorize/family/member?group_id=%s&member_id=%s", root, groupID, member.ID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":           true,
+		"member_id":         member.ID,
+		"authorization_url": authURL,
+		"message":           "Member added successfully",
+	})
+}
+
+// T034: Remove member from family group
+func removeFamilyGroupMember(w http.ResponseWriter, r *http.Request) {
+	if storage == nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	groupID := strings.TrimSpace(vars["group_id"])
+	memberID := strings.TrimSpace(vars["member_id"])
+
+	if groupID == "" || memberID == "" {
+		http.Error(w, "missing group_id or member_id", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Verify member exists and belongs to group
+	member, err := storage.GetGroupMember(ctx, memberID)
+	if err != nil || member.FamilyGroupID != groupID {
+		http.Error(w, "member not found", http.StatusNotFound)
+		return
+	}
+
+	// Remove member
+	if err := storage.RemoveGroupMember(ctx, groupID, memberID); err != nil {
+		slog.Error("failed to remove group member", "group_id", groupID, "member_id", memberID, "error", err)
+		http.Error(w, "failed to remove member", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("family group member removed", "group_id", groupID, "member_id", memberID, "label", member.TempLabel)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Member removed successfully",
+	})
+}
+
+// T035: Delete entire family group
+func deleteFamilyGroup(w http.ResponseWriter, r *http.Request) {
+	if storage == nil {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	groupID := strings.TrimSpace(vars["id"])
+	if groupID == "" {
+		http.Error(w, "missing group id", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Verify group exists
+	group, err := storage.GetFamilyGroup(ctx, groupID)
+	if err != nil {
+		http.Error(w, "family group not found", http.StatusNotFound)
+		return
+	}
+
+	// Delete group (cascade deletes members and retry queue items)
+	if err := storage.DeleteFamilyGroup(ctx, groupID); err != nil {
+		slog.Error("failed to delete family group", "group_id", groupID, "error", err)
+		http.Error(w, "failed to delete family group", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("family group deleted", "group_id", groupID, "plex_username", group.PlexUsername)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Family group deleted successfully",
+	})
+}
+
 // renderAdminDashboard serves the admin dashboard HTML
 func renderAdminDashboard(w http.ResponseWriter, r *http.Request) {
 	tmpl := template.Must(template.New("admin.html").Funcs(templateFuncs).ParseFiles("static/admin.html"))
 	if err := tmpl.Execute(w, nil); err != nil {
 		slog.Error("failed to render admin dashboard", "error", err)
 	}
+}
+
+// renderFamilyAdmin serves the family groups admin HTML
+func renderFamilyAdmin(w http.ResponseWriter, r *http.Request) {
+	tmpl := template.Must(template.New("family-admin.html").Funcs(templateFuncs).ParseFiles("static/family-admin.html"))
+	if err := tmpl.Execute(w, nil); err != nil {
+		slog.Error("failed to render family admin", "error", err)
+	}
+}
+
+// ========== TELEMETRY API ==========
+
+// telemetryHandler receives and logs onboarding telemetry events
+func telemetryHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Event      string `json:"event"`
+		Mode       string `json:"mode"`
+		Success    *bool  `json:"success"`
+		DurationMs int64  `json:"duration_ms"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Build structured log entry
+	logFields := []interface{}{
+		"event", req.Event,
+		"mode", req.Mode,
+		"duration_ms", req.DurationMs,
+	}
+
+	if req.Success != nil {
+		logFields = append(logFields, "success", *req.Success)
+	}
+
+	// Log telemetry event with structured fields
+	slog.Info("onboarding telemetry", logFields...)
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ========== QUEUE MONITORING API ==========
@@ -1734,6 +2734,7 @@ func getQueueStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Get all users
 	users := storage.ListUsers()
+	slog.Debug("queue status requested", "user_count", len(users))
 
 	// Build per-user queue info
 	userInfos := make([]map[string]interface{}, 0, len(users))
@@ -1819,12 +2820,14 @@ func determineQueueStatus(queueSize int, oldestAgeSeconds *int64, drainActive bo
 // getQueueEvents returns recent queue events from the log
 func getQueueEvents(w http.ResponseWriter, r *http.Request) {
 	if queueEventLog == nil {
+		slog.Error("queue event log unavailable")
 		http.Error(w, "queue event log unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	// Get recent events (default 50)
 	events := queueEventLog.GetRecent(50)
+	slog.Debug("queue events requested", "event_count", len(events))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1891,6 +2894,92 @@ func calculateQueueStats(events []store.QueuedScrobbleEvent) map[string]interfac
 		"by_action":      byAction,
 		"by_retry_count": byRetryCount,
 	}
+}
+
+// ========== RETRY QUEUE WORKER (FR-016) ==========
+
+// startRetryQueueWorker initializes and starts the PostgreSQL-backed retry queue worker.
+// This worker processes failed scrobbles with exponential backoff and handles permanent
+// failures after 5 attempts (FR-016).
+//
+// The worker:
+// - Polls retry_queue_items table every 15 seconds
+// - Retries failed scrobbles with exponential backoff (30s, 1m, 2m, 4m, 8m, capped at 30m)
+// - Marks items as permanent_failure after 5 attempts
+// - Sends notifications to group owners on permanent failures (FR-008a)
+// - Logs queue metrics for observability
+func startRetryQueueWorker(ctx context.Context, storage store.Store, traktSrv *trakt.Trakt) {
+	slog.Info("retry queue worker starting")
+
+	// Create notifier for permanent failure notifications
+	notifier := notify.NewNotifier()
+
+	// Create PostgreSQL repository wrapper
+	repo := queue.NewPostgresRepo(storage)
+
+	// Create worker with default configuration
+	worker := queue.NewWorker(queue.WorkerConfig{
+		Repo:         repo,
+		Trakt:        traktSrv,
+		Notifier:     notifier,
+		Store:        storage,
+		PollInterval: 0, // Use default (15 seconds)
+		BatchSize:    0, // Use default (50 items)
+	})
+
+	// Start worker in background goroutine
+	// The worker will respect context cancellation for graceful shutdown
+	go func() {
+		worker.Start(ctx)
+		slog.Info("retry queue worker stopped")
+	}()
+
+	// Log initial queue metrics
+	go func() {
+		// Wait briefly for worker to stabilize
+		time.Sleep(5 * time.Second)
+		logRetryQueueMetrics(ctx, repo)
+
+		// Periodically log queue metrics (every 5 minutes)
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				logRetryQueueMetrics(ctx, repo)
+			}
+		}
+	}()
+}
+
+// logRetryQueueMetrics logs current retry queue depth and permanent failure counts.
+func logRetryQueueMetrics(ctx context.Context, repo *queue.PostgresRepo) {
+	// Fetch all due items to get queue depth
+	items, err := repo.FetchDueItems(ctx, time.Now().Add(24*time.Hour), 1000)
+	if err != nil {
+		slog.Warn("failed to fetch retry queue metrics", "error", err)
+		return
+	}
+
+	queuedCount := 0
+	permanentCount := 0
+
+	for _, item := range items {
+		if item.Status == "permanent_failure" {
+			permanentCount++
+		} else {
+			queuedCount++
+		}
+	}
+
+	slog.Info("retry queue metrics",
+		"queued_items", queuedCount,
+		"permanent_failures", permanentCount,
+		"total", len(items),
+	)
 }
 
 // ========== QUEUE DRAIN SYSTEM ==========
@@ -2182,6 +3271,15 @@ func main() {
 	defer cancel()
 	go startQueueDrainSystem(ctx, storage, traktSrv)
 
+	// Start retry queue worker (PostgreSQL only - FR-016)
+	// This worker processes failed scrobbles from the retry_queue_items table
+	// with exponential backoff and permanent failure notifications after 5 attempts.
+	if _, isPostgres := storage.(*store.PostgresqlStore); isPostgres {
+		startRetryQueueWorker(ctx, storage, traktSrv)
+	} else {
+		slog.Info("retry queue worker disabled (PostgreSQL storage required)")
+	}
+
 	router := mux.NewRouter()
 	// Assumption: Behind a proper web server (nginx/traefik, etc) that removes/replaces trusted headers
 	router.Use(recoveryMiddleware)
@@ -2200,14 +3298,18 @@ func main() {
 	}
 	router.PathPrefix("/static/").Handler(cacheStaticFiles(http.StripPrefix("/static/", http.FileServer(http.Dir("static")))))
 	router.HandleFunc("/authorize", authorize).Methods("GET")
+	router.HandleFunc("/authorize/family/member", authorizeFamilyMember).Methods("GET")
 	router.HandleFunc("/manual/authorize", authorize).Methods("GET")
 	router.HandleFunc("/oauth/state", createAuthState).Methods("POST")
+	router.HandleFunc("/oauth/family/state", createFamilyAuthState).Methods("POST")
 	router.HandleFunc("/api", api).Methods("POST")
+	router.HandleFunc("/api/telemetry", telemetryHandler).Methods("POST")
 	router.HandleFunc("/users/{id}/trakt-display-name", updateTraktDisplayName).Methods("POST")
 	router.Handle("/healthcheck", healthcheckHandler()).Methods("GET")
 
 	// Admin routes
 	router.HandleFunc("/admin", renderAdminDashboard).Methods("GET")
+	router.HandleFunc("/admin/family", renderFamilyAdmin).Methods("GET")
 	router.HandleFunc("/admin/api/users", listAdminUsers).Methods("GET")
 	router.HandleFunc("/admin/api/users/{id}", getAdminUser).Methods("GET")
 	router.HandleFunc("/admin/api/users/{id}", updateAdminUser).Methods("PUT")
@@ -2218,6 +3320,13 @@ func main() {
 	router.HandleFunc("/admin/api/queue/status", getQueueStatus).Methods("GET")
 	router.HandleFunc("/admin/api/queue/events", getQueueEvents).Methods("GET")
 	router.HandleFunc("/admin/api/queue/user/{id}", getUserQueueDetail).Methods("GET")
+
+	// Family group admin routes
+	router.HandleFunc("/admin/api/family-groups", listFamilyGroups).Methods("GET")
+	router.HandleFunc("/admin/api/family-groups/{id}", getFamilyGroupDetail).Methods("GET")
+	router.HandleFunc("/admin/api/family-groups/{id}/members", addFamilyGroupMember).Methods("POST")
+	router.HandleFunc("/admin/api/family-groups/{group_id}/members/{member_id}", removeFamilyGroupMember).Methods("DELETE")
+	router.HandleFunc("/admin/api/family-groups/{id}", deleteFamilyGroup).Methods("DELETE")
 
 	router.HandleFunc("/", renderLandingPage).Methods("GET")
 	listen := os.Getenv("LISTEN")

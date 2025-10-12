@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"crovlune/plaxt/lib/common"
+
 	"github.com/peterbourgon/diskv"
 )
 
@@ -194,8 +196,8 @@ func (s DiskStore) read(key string) (string, error) {
 // ========== QUEUE METHODS ==========
 
 const (
-	queueBasePath  = "keystore/queue"
-	maxQueuePerUser = 1000
+	queueBasePath      = "keystore/queue"
+	maxQueuePerUser    = 1000
 	fallbackBufferSize = 100
 )
 
@@ -519,6 +521,360 @@ func (s *DiskStore) PurgeQueueForUser(ctx context.Context, userID string) (int, 
 	}
 
 	return queueSize, nil
+}
+
+// ========== FAMILY GROUP STORAGE ==========
+
+const (
+	familyGroupBasePath = "keystore/family_groups"
+	groupMemberBasePath = "keystore/group_members"
+	plexMappingBasePath = "keystore/family_groups/by_plex"
+)
+
+func (s DiskStore) CreateFamilyGroup(ctx context.Context, group *FamilyGroup) error {
+	// Check if Plex username already exists
+	existing, err := s.GetFamilyGroupByPlex(ctx, group.PlexUsername)
+	if err != nil {
+		return fmt.Errorf("failed to check plex username uniqueness: %w", err)
+	}
+	if existing != nil {
+		return fmt.Errorf("plex username %s already exists", group.PlexUsername)
+	}
+
+	// Create family group directory
+	groupDir := filepath.Join(familyGroupBasePath, group.ID)
+	if err := os.MkdirAll(groupDir, 0755); err != nil {
+		return fmt.Errorf("failed to create family group directory: %w", err)
+	}
+
+	// Write family group data
+	groupFile := filepath.Join(groupDir, "group.json")
+	groupData, err := json.MarshalIndent(group, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal family group: %w", err)
+	}
+
+	if err := os.WriteFile(groupFile, groupData, 0644); err != nil {
+		return fmt.Errorf("failed to write family group file: %w", err)
+	}
+
+	// Create Plex username mapping
+	plexMappingFile := filepath.Join(plexMappingBasePath, group.PlexUsername)
+	if err := os.MkdirAll(filepath.Dir(plexMappingFile), 0755); err != nil {
+		return fmt.Errorf("failed to create plex mapping directory: %w", err)
+	}
+
+	if err := os.WriteFile(plexMappingFile, []byte(group.ID), 0644); err != nil {
+		return fmt.Errorf("failed to write plex mapping: %w", err)
+	}
+
+	return nil
+}
+
+func (s DiskStore) GetFamilyGroup(ctx context.Context, groupID string) (*FamilyGroup, error) {
+	groupFile := filepath.Join(familyGroupBasePath, groupID, "group.json")
+	data, err := os.ReadFile(groupFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read family group file: %w", err)
+	}
+
+	var group FamilyGroup
+	if err := json.Unmarshal(data, &group); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal family group: %w", err)
+	}
+
+	return &group, nil
+}
+
+func (s DiskStore) GetFamilyGroupByPlex(ctx context.Context, plexUsername string) (*FamilyGroup, error) {
+	plexMappingFile := filepath.Join(plexMappingBasePath, plexUsername)
+	groupIDBytes, err := os.ReadFile(plexMappingFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read plex mapping: %w", err)
+	}
+
+	groupID := strings.TrimSpace(string(groupIDBytes))
+	return s.GetFamilyGroup(ctx, groupID)
+}
+
+func (s DiskStore) ListFamilyGroups(ctx context.Context) ([]*FamilyGroup, error) {
+	// List all family group directories
+	entries, err := os.ReadDir(familyGroupBasePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []*FamilyGroup{}, nil
+		}
+		return nil, fmt.Errorf("failed to list family groups: %w", err)
+	}
+
+	var groups []*FamilyGroup
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		group, err := s.GetFamilyGroup(ctx, entry.Name())
+		if err != nil {
+			slog.Error("failed to load family group", "groupID", entry.Name(), "error", err)
+			continue
+		}
+		if group != nil {
+			groups = append(groups, group)
+		}
+	}
+
+	return groups, nil
+}
+
+func (s DiskStore) DeleteFamilyGroup(ctx context.Context, groupID string) error {
+	// Get family group to find plex username
+	group, err := s.GetFamilyGroup(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("failed to get family group for deletion: %w", err)
+	}
+	if group == nil {
+		return nil // Already deleted
+	}
+
+	// Get all members to delete them
+	members, err := s.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("failed to list group members for deletion: %w", err)
+	}
+
+	// Delete all members
+	for _, member := range members {
+		if err := s.RemoveGroupMember(ctx, groupID, member.ID); err != nil {
+			slog.Error("failed to delete group member during group deletion", "memberID", member.ID, "error", err)
+		}
+	}
+
+	// Delete family group directory
+	groupDir := filepath.Join(familyGroupBasePath, groupID)
+	if err := os.RemoveAll(groupDir); err != nil {
+		return fmt.Errorf("failed to delete family group directory: %w", err)
+	}
+
+	// Delete Plex username mapping
+	plexMappingFile := filepath.Join(plexMappingBasePath, group.PlexUsername)
+	if err := os.Remove(plexMappingFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete plex mapping: %w", err)
+	}
+
+	return nil
+}
+
+func (s DiskStore) AddGroupMember(ctx context.Context, member *GroupMember) error {
+	// Check if Trakt username already exists in this group
+	if member.TraktUsername != "" {
+		existing, err := s.GetGroupMemberByTrakt(ctx, member.FamilyGroupID, member.TraktUsername)
+		if err != nil {
+			return fmt.Errorf("failed to check for duplicate trakt username: %w", err)
+		}
+		if existing != nil {
+			return fmt.Errorf("trakt username %s already exists in this group", member.TraktUsername)
+		}
+	}
+
+	// Create group member directory
+	memberDir := filepath.Join(groupMemberBasePath, member.ID)
+	if err := os.MkdirAll(memberDir, 0755); err != nil {
+		return fmt.Errorf("failed to create group member directory: %w", err)
+	}
+
+	// Write group member data
+	memberFile := filepath.Join(memberDir, "member.json")
+	memberData, err := json.MarshalIndent(member, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal group member: %w", err)
+	}
+
+	if err := os.WriteFile(memberFile, memberData, 0644); err != nil {
+		return fmt.Errorf("failed to write group member file: %w", err)
+	}
+
+	// Add to family group members list
+	membersListFile := filepath.Join(familyGroupBasePath, member.FamilyGroupID, "members.txt")
+	membersList, err := s.readMembersList(membersListFile)
+	if err != nil {
+		return fmt.Errorf("failed to read members list: %w", err)
+	}
+
+	membersList = append(membersList, member.ID)
+	if err := s.writeMembersList(membersListFile, membersList); err != nil {
+		return fmt.Errorf("failed to write members list: %w", err)
+	}
+
+	return nil
+}
+
+func (s DiskStore) GetGroupMember(ctx context.Context, memberID string) (*GroupMember, error) {
+	memberFile := filepath.Join(groupMemberBasePath, memberID, "member.json")
+	data, err := os.ReadFile(memberFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read group member file: %w", err)
+	}
+
+	var member GroupMember
+	if err := json.Unmarshal(data, &member); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal group member: %w", err)
+	}
+
+	return &member, nil
+}
+
+func (s DiskStore) UpdateGroupMember(ctx context.Context, member *GroupMember) error {
+	memberFile := filepath.Join(groupMemberBasePath, member.ID, "member.json")
+	memberData, err := json.MarshalIndent(member, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal group member: %w", err)
+	}
+
+	if err := os.WriteFile(memberFile, memberData, 0644); err != nil {
+		return fmt.Errorf("failed to update group member file: %w", err)
+	}
+
+	return nil
+}
+
+func (s DiskStore) RemoveGroupMember(ctx context.Context, groupID, memberID string) error {
+	// Remove from family group members list
+	membersListFile := filepath.Join(familyGroupBasePath, groupID, "members.txt")
+	membersList, err := s.readMembersList(membersListFile)
+	if err != nil {
+		return fmt.Errorf("failed to read members list: %w", err)
+	}
+
+	// Remove member ID from list
+	var newMembersList []string
+	for _, id := range membersList {
+		if id != memberID {
+			newMembersList = append(newMembersList, id)
+		}
+	}
+
+	if err := s.writeMembersList(membersListFile, newMembersList); err != nil {
+		return fmt.Errorf("failed to write updated members list: %w", err)
+	}
+
+	// Delete group member directory
+	memberDir := filepath.Join(groupMemberBasePath, memberID)
+	if err := os.RemoveAll(memberDir); err != nil {
+		return fmt.Errorf("failed to delete group member directory: %w", err)
+	}
+
+	return nil
+}
+
+func (s DiskStore) ListGroupMembers(ctx context.Context, groupID string) ([]*GroupMember, error) {
+	membersListFile := filepath.Join(familyGroupBasePath, groupID, "members.txt")
+	memberIDs, err := s.readMembersList(membersListFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read members list: %w", err)
+	}
+
+	var members []*GroupMember
+	for _, memberID := range memberIDs {
+		member, err := s.GetGroupMember(ctx, memberID)
+		if err != nil {
+			slog.Error("failed to get group member", "memberID", memberID, "error", err)
+			continue
+		}
+		if member != nil {
+			members = append(members, member)
+		}
+	}
+
+	return members, nil
+}
+
+func (s DiskStore) GetGroupMemberByTrakt(ctx context.Context, groupID, traktUsername string) (*GroupMember, error) {
+	members, err := s.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list group members: %w", err)
+	}
+
+	for _, member := range members {
+		if member.TraktUsername == traktUsername {
+			return member, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// Helper methods for managing members list
+func (s DiskStore) readMembersList(filePath string) ([]string, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var members []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			members = append(members, line)
+		}
+	}
+
+	return members, nil
+}
+
+func (s DiskStore) writeMembersList(filePath string, members []string) error {
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return err
+	}
+
+	content := strings.Join(members, "\n")
+	return os.WriteFile(filePath, []byte(content), 0644)
+}
+
+func (s DiskStore) EnqueueRetryItem(ctx context.Context, item *RetryQueueItem) error {
+	return ErrNotSupported
+}
+
+func (s DiskStore) ListDueRetryItems(ctx context.Context, now time.Time, limit int) ([]*RetryQueueItem, error) {
+	return nil, ErrNotSupported
+}
+
+func (s DiskStore) MarkRetrySuccess(ctx context.Context, id string) error {
+	return ErrNotSupported
+}
+
+func (s DiskStore) MarkRetryFailure(ctx context.Context, id string, attempt int, nextAttempt time.Time, lastErr string, permanent bool) error {
+	return ErrNotSupported
+}
+
+// ========== NOTIFICATION METHODS (UNSUPPORTED) ==========
+
+func (s DiskStore) CreateNotification(ctx context.Context, notification *Notification) error {
+	return ErrNotSupported
+}
+
+func (s DiskStore) GetNotifications(ctx context.Context, familyGroupID string, includeDismissed bool) ([]*Notification, error) {
+	return nil, ErrNotSupported
+}
+
+func (s DiskStore) DismissNotification(ctx context.Context, notificationID string) error {
+	return ErrNotSupported
+}
+
+func (s DiskStore) DeleteNotification(ctx context.Context, notificationID string) error {
+	return ErrNotSupported
 }
 
 // ========== FALLBACK BUFFER HELPERS ==========

@@ -119,7 +119,7 @@ Browse to `http://localhost:8000` and follow the wizard.
 - Run tests: `go test ./...`.
 - Upgrade deps: `go get -u ./... && go mod tidy`.
 
-Static assets build through a lightweight Go-based pipeline. Run `go run ./tools/assets` after changing files in `static/css` or `static/js`; the command writes hashed, minified bundles into `static/dist/manifest.json` for the server to consume.
+Static assets build through esbuild for optimal minification and performance. Run `npm run build` after changing files in `static/css` or `static/js`; the command writes hashed, minified bundles into `static/dist/manifest.json` for the server to consume.
 
 ### Building containers
 

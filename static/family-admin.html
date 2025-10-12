@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Plaxt Admin - Family Groups</title>
+    <link rel="icon" type="image/png" href="/static/img/favicon.png" />
+    <link rel="stylesheet" href="{{ assetPath "css/wizard.css" }}" />
+    <link rel="stylesheet" href="{{ assetPath "css/common.css" }}" />
+    <link rel="stylesheet" href="{{ assetPath "css/admin.css" }}" />
+  </head>
+  <body>
+    <div class="admin-container">
+      <div class="admin-header">
+        <h1>Family Groups</h1>
+        <div style="display: flex; gap: 0.75rem;">
+          <a
+            href="/admin"
+            class="btn btn-edit"
+            style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+            User Management
+          </a>
+          <a
+            href="/admin/queue"
+            class="btn btn-edit"
+            style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12h18M3 6h18M3 18h18" />
+            </svg>
+            Queue Monitor
+          </a>
+          <a href="/" class="btn btn-back" style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;">
+            <img src="/static/img/home.svg" alt="Home Icon" width="16" height="16" />
+            Back to Home
+          </a>
+        </div>
+      </div>
+
+      <div class="admin-stats">
+        <div class="stat-card">
+          <div class="stat-label">Total Groups</div>
+          <div class="stat-value" id="stat-total">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Members</div>
+          <div class="stat-value" id="stat-members" style="color: #6366f1;">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Authorized Members</div>
+          <div class="stat-value" id="stat-authorized" style="color: #10b981;">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Pending Authorization</div>
+          <div class="stat-value" id="stat-pending" style="color: #f59e0b;">-</div>
+        </div>
+      </div>
+
+      <div id="error-container"></div>
+
+      <div class="users-table-container">
+        <div class="table-header">
+          <h2>All Family Groups</h2>
+        </div>
+        <div id="table-content">
+          <div class="loading">Loading family groups...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group Detail Modal -->
+    <div id="detail-modal" class="modal">
+      <div class="modal-content" style="max-width: 800px;">
+        <div class="modal-header">
+          <h2>Family Group Details</h2>
+        </div>
+        <div class="modal-body">
+          <div id="detail-content">
+            <div class="loading">Loading group details...</div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            style="border: 1px solid lightgray;"
+            onclick="closeDetailModal()"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete Group Modal -->
+    <div id="delete-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Delete Family Group</h2>
+        </div>
+        <div class="modal-body">
+          <p>Are you sure you want to delete this family group?</p>
+          <p><strong id="delete-group-name"></strong></p>
+          <p style="color: #dc2626; margin-top: 1rem;">This will delete all members and cannot be undone.</p>
+          <input type="hidden" id="delete-group-id" />
+        </div>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            style="border: 1px solid lightgray"
+            onclick="closeDeleteModal()"
+          >
+            Cancel
+          </button>
+          <button type="button" class="btn btn-delete" onclick="confirmDeleteGroup()">Delete Group</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Member Modal -->
+    <div id="add-member-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Add Family Member</h2>
+        </div>
+        <div class="modal-body">
+          <form id="add-member-form">
+            <input type="hidden" id="add-member-group-id" />
+            <div class="form-group">
+              <label for="add-member-label">Member Label</label>
+              <input type="text" id="add-member-label" placeholder="e.g., Mom, Dad, Sister" required />
+              <small style="color: #6b7280; display: block; margin-top: 0.5rem;">
+                A friendly name to identify this family member
+              </small>
+            </div>
+          </form>
+        </div>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            style="border: 1px solid lightgray;"
+            onclick="closeAddMemberModal()"
+          >
+            Cancel
+          </button>
+          <button type="button" class="btn btn-edit" onclick="confirmAddMember()">Add Member</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Remove Member Modal -->
+    <div id="remove-member-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Remove Family Member</h2>
+        </div>
+        <div class="modal-body">
+          <p>Are you sure you want to remove this member?</p>
+          <p><strong id="remove-member-name"></strong></p>
+          <p style="color: #dc2626; margin-top: 1rem;">This action cannot be undone.</p>
+          <input type="hidden" id="remove-member-group-id" />
+          <input type="hidden" id="remove-member-id" />
+        </div>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            style="border: 1px solid lightgray"
+            onclick="closeRemoveMemberModal()"
+          >
+            Cancel
+          </button>
+          <button type="button" class="btn btn-delete" onclick="confirmRemoveMember()">Remove Member</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="{{ assetPath "js/common.js" }}"></script>
+    <script src="{{ assetPath "js/family-admin.js" }}"></script>
+  </body>
+</html>

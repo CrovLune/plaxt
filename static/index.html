@@ -1,14 +1,33 @@
 {{/* Guided Plaxt UI template */}}
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
+    <meta charset="utf-8" />
     <title>Plaxt</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/png" href="/static/img/favicon.png">
-    <link rel="stylesheet" href="{{assetPath "css/wizard.css"}}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="/static/img/favicon.png" />
+    <link rel="stylesheet" href="{{ assetPath "css/wizard.css" }}" />
   </head>
-  <body data-root="{{.SelfRoot}}" data-client-id="{{.ClientID}}" data-mode="{{.Mode}}" data-onboarding-result="{{.Onboarding.Result}}" data-onboarding-username="{{.Onboarding.Username}}" data-manual-result="{{.Manual.Result}}" data-has-manual="{{if .Manual.HasUsers}}true{{else}}false{{end}}" data-manual-display-name="{{.Manual.DisplayName}}" data-manual-display-warning="{{.Manual.DisplayNameWarning}}" data-manual-display-missing="{{if .Manual.DisplayNameMissing}}true{{else}}false{{end}}">
+  <body
+    data-root="{{ .SelfRoot }}"
+    data-client-id="{{ .ClientID }}"
+    data-mode="{{ .Mode }}"
+    data-onboarding-result="{{ .Onboarding.Result }}"
+    data-onboarding-username="{{ .Onboarding.Username }}"
+    data-manual-result="{{ .Manual.Result }}"
+    data-has-manual="{{ if .Manual.HasUsers }}
+      true
+    {{ else }}
+      false
+    {{ end }}"
+    data-manual-display-name="{{ .Manual.DisplayName }}"
+    data-manual-display-warning="{{ .Manual.DisplayNameWarning }}"
+    data-manual-display-missing="{{ if .Manual.DisplayNameMissing }}
+      true
+    {{ else }}
+      false
+    {{ end }}"
+  >
     <div class="wizard-container" id="wizard-root">
       <div class="hero-branding">
         <!-- <div class="hero-logo">
@@ -16,21 +35,116 @@
         </div> -->
         <div style="position: absolute; top: 1.5rem; right: 1.5rem;">
           <a href="/admin" class="admin-link" title="User Management">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-              <circle cx="9" cy="7" r="4"></circle>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-            </svg>
-            <span>Admin</span>
+            <img src="/static/img/options.svg" alt="Options Icon" width="24px" height="24px" />
+            <span>Administration</span>
           </a>
         </div>
         <h1 class="hero-title">Plaxt</h1>
-        <p class="hero-subtitle">Plex provides webhooks for Plex Pass subscribers. Plaxt listens for those webhooks and scrobbles your plays to Trakt.</p>
+        <p class="hero-subtitle">
+          Plex provides webhooks for Plex Pass subscribers. Plaxt listens for those webhooks and scrobbles your plays to
+          Trakt.
+        </p>
       </div>
+
+      <div class="mode-selection-info">
+        <h2 class="mode-selection-title">How Plaxt Works</h2>
+        <div class="mode-cards">
+          <div class="mode-card">
+            <h3>
+              <span class="mode-card-icon" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+              </span>
+              Individual Account
+            </h3>
+            <p>
+              One Plex user linked to one Trakt account. Use this if you're the only person using your Plex account.
+            </p>
+          </div>
+          <div class="mode-card">
+            <h3>
+              <span class="mode-card-icon" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="9" cy="7" r="4"></circle>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                </svg>
+              </span>
+              Family Account
+            </h3>
+            <p>
+              One Plex user linked to multiple Trakt accounts (2-10). Perfect for households where multiple people share
+              a Plex account but want separate Trakt histories.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div class="wizard-nav">
-        <button type="button" data-mode-toggle="onboarding" class="{{if ne .Mode "renew"}}is-active{{end}}">Onboarding</button>
-        <button type="button" data-mode-toggle="renew" class="{{if eq .Mode "renew"}}is-active{{end}}" {{if not .Manual.Enabled}}disabled{{end}}>Manual renewal</button>
+        <div class="nav-button-wrapper">
+          <button
+            type="button"
+            data-mode-toggle="onboarding"
+            class="{{ if and (ne .Mode "renew") (ne .Mode "family") }}is-active{{ end }}"
+          >
+            Individual Account
+            <span
+              class="tooltip-trigger"
+              data-tooltip-for="individual"
+              aria-label="More information about Individual Account"
+            >
+              <img src="/static/img/info.svg" alt="info icon" width="16px" height="16px" />
+            </span>
+          </button>
+          <div class="tooltip" role="tooltip" data-tooltip-id="individual">
+            <strong>Individual Account</strong>
+            <p>
+              Best for single users. Links one Plex username to one Trakt account. Quick setup with just one
+              authorization step.
+            </p>
+          </div>
+        </div>
+        <div class="nav-button-wrapper">
+          <button type="button" data-mode-toggle="family" class="{{ if eq .Mode "family" }}is-active{{ end }}">
+            Family Account
+            <span class="tooltip-trigger" data-tooltip-for="family" aria-label="More information about Family Account">
+              <img src="/static/img/info.svg" alt="info icon" width="16px" height="16px" />
+            </span>
+          </button>
+          <div class="tooltip" role="tooltip" data-tooltip-id="family">
+            <strong>Family Account</strong>
+            <p>
+              Perfect for households. Links one shared Plex account to 2-10 separate Trakt accounts. Each person
+              authorizes independently and maintains their own watch history.
+            </p>
+          </div>
+        </div>
+        <div class="nav-button-wrapper">
+          <button
+            type="button"
+            data-mode-toggle="renew"
+            class="{{ if eq .Mode "renew" }}is-active{{ end }}"
+          >
+            Manual Renewal
+            <span
+              class="tooltip-trigger"
+              data-tooltip-for="renewal"
+              aria-label="More information about Manual Renewal"
+            >
+              <img src="/static/img/info.svg" alt="info icon" width="16px" height="16px" />
+            </span>
+          </button>
+          <div class="tooltip" role="tooltip" data-tooltip-id="renewal">
+            <strong>Manual Renewal</strong>
+            <p>
+              For existing users who need to refresh their Trakt API tokens. Tokens expire after 3 months and must be
+              renewed to continue scrobbling.
+            </p>
+          </div>
+        </div>
       </div>
 
       {{/* Onboarding wizard */}}
@@ -38,41 +152,57 @@
       {{ $stepOne := index $onboardingSteps 0 }}
       {{ $stepTwo := index $onboardingSteps 1 }}
       {{ $stepThree := index $onboardingSteps 2 }}
-      <section class="wizard-section {{if eq .Mode "renew"}}mode-hidden{{end}}" data-mode-section="onboarding">
+      <section
+        class="wizard-section {{ if or (eq .Mode "renew") (eq .Mode "family") }}mode-hidden{{ end }}"
+        data-mode-section="onboarding"
+      >
         <div class="wizard-progress">
-          <div class="wizard-progress-item" data-state="{{$stepOne.State}}" data-step-id="{{$stepOne.ID}}">
-            <div class="wizard-progress-title">{{$stepOne.Title}}</div>
-            <p>{{$stepOne.Description}}</p>
-            {{if and (ne $stepOne.Summary "") (eq $stepOne.State "complete")}}
-              <p class="step-complete-summary">{{$stepOne.Summary}}</p>
-            {{end}}
+          <div class="wizard-progress-item" data-state="{{ $stepOne.State }}" data-step-id="{{ $stepOne.ID }}">
+            <div class="wizard-progress-title">{{ $stepOne.Title }}</div>
+            <p>{{ $stepOne.Description }}</p>
+            {{ if and (ne $stepOne.Summary "") (eq $stepOne.State "complete") }}
+              <p class="step-complete-summary">{{ $stepOne.Summary }}</p>
+            {{ end }}
           </div>
-          <div class="wizard-progress-item" data-state="{{$stepTwo.State}}" data-step-id="{{$stepTwo.ID}}">
-            <div class="wizard-progress-title">{{$stepTwo.Title}}</div>
-            <p>{{$stepTwo.Description}}</p>
-            {{if and (ne $stepTwo.Summary "") (eq $stepTwo.State "complete")}}
-              <p class="step-complete-summary">{{$stepTwo.Summary}}</p>
-            {{end}}
+          <div class="wizard-progress-item" data-state="{{ $stepTwo.State }}" data-step-id="{{ $stepTwo.ID }}">
+            <div class="wizard-progress-title">{{ $stepTwo.Title }}</div>
+            <p>{{ $stepTwo.Description }}</p>
+            {{ if and (ne $stepTwo.Summary "") (eq $stepTwo.State "complete") }}
+              <p class="step-complete-summary">{{ $stepTwo.Summary }}</p>
+            {{ end }}
           </div>
-          <div class="wizard-progress-item" data-state="{{$stepThree.State}}" data-step-id="{{$stepThree.ID}}" data-result="{{.Onboarding.Result}}">
-            <div class="wizard-progress-title">{{$stepThree.Title}}</div>
-            <p>{{$stepThree.Description}}</p>
-            {{if and (ne $stepThree.Summary "") (eq $stepThree.State "complete")}}
-              <p class="step-complete-summary">{{$stepThree.Summary}}</p>
-            {{end}}
+          <div
+            class="wizard-progress-item"
+            data-state="{{ $stepThree.State }}"
+            data-step-id="{{ $stepThree.ID }}"
+            data-result="{{ .Onboarding.Result }}"
+          >
+            <div class="wizard-progress-title">{{ $stepThree.Title }}</div>
+            <p>{{ $stepThree.Description }}</p>
+            {{ if and (ne $stepThree.Summary "") (eq $stepThree.State "complete") }}
+              <p class="step-complete-summary">{{ $stepThree.Summary }}</p>
+            {{ end }}
           </div>
         </div>
 
-        {{with .Onboarding.Banner}}
-          <div class="banner banner-{{.Type}}" role="status">{{.Message}}</div>
-        {{end}}
+        {{ with .Onboarding.Banner }}
+          <div class="banner banner-{{ .Type }}" role="status">{{ .Message }}</div>
+        {{ end }}
 
-        <div class="wizard-step" data-step-id="{{$stepOne.ID}}" data-state="{{$stepOne.State}}">
-          <h3 tabindex="-1">{{$stepOne.Title}}</h3>
+
+        <div class="wizard-step" data-step-id="{{ $stepOne.ID }}" data-state="{{ $stepOne.State }}">
+          <h3 tabindex="-1">{{ $stepOne.Title }}</h3>
           <p>Enter your Plex username so Plaxt can personalise the setup experience.</p>
           <form class="js-onboarding-form" novalidate>
             <label for="onboarding-username">Plex username</label>
-            <input id="onboarding-username" class="input-field js-onboarding-username" name="username" autocomplete="username" value="{{.Onboarding.Username}}" required>
+            <input
+              id="onboarding-username"
+              class="input-field js-onboarding-username"
+              name="username"
+              autocomplete="username"
+              value="{{ .Onboarding.Username }}"
+              required
+            />
             <p class="field-error js-onboarding-error"></p>
             <div class="wizard-actions">
               <button type="submit" class="button-primary">Continue</button>
@@ -80,36 +210,277 @@
           </form>
         </div>
 
-        <div class="wizard-step" data-step-id="{{$stepTwo.ID}}" data-state="{{$stepTwo.State}}">
-          <h3 tabindex="-1">{{$stepTwo.Title}}</h3>
+        <div class="wizard-step" data-step-id="{{ $stepTwo.ID }}" data-state="{{ $stepTwo.State }}">
+          <h3 tabindex="-1">{{ $stepTwo.Title }}</h3>
           <p>Review the details below, then authorize with Trakt when you're ready.</p>
           <div class="wizard-summary">
-            <p><strong>Plex user:</strong> <span class="js-onboarding-summary-name">{{if .Onboarding.Username}}{{.Onboarding.Username}}{{else}}—{{end}}</span></p>
-            <p>Need access? <a href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener">Create a Trakt application</a> and configure the callback to <code>{{.SelfRoot}}/authorize</code>.</p>
+            <p>
+              <strong>Plex user:</strong>
+              <span class="js-onboarding-summary-name"
+                >{{ if .Onboarding.Username }}{{ .Onboarding.Username }}{{ else }}—{{ end }}</span
+              >
+            </p>
+            <p>
+              Need access?
+              <a style="color:#6366f1" href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener"
+                >Create a Trakt application</a
+              >
+              and configure the callback to <code>{{ .SelfRoot }}/authorize</code>.
+            </p>
           </div>
           <p class="field-error js-onboarding-auth-error"></p>
           <div class="wizard-actions">
             <button type="button" class="button-primary button-with-icon js-onboarding-start">
               <span class="button-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"></circle>
-                  <path d="M8.5 8.5l7 7m0-7l-7 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
-                </svg>
+                <img src="/static/img/trakt-icon.png" alt="Trakt Icon" />
               </span>
               <span>Authorize with Trakt</span>
             </button>
           </div>
         </div>
 
-        <div class="wizard-step" data-step-id="{{$stepThree.ID}}" data-state="{{$stepThree.State}}">
-          <h3 tabindex="-1">{{$stepThree.Title}}</h3>
+        <div class="wizard-step" data-step-id="{{ $stepThree.ID }}" data-state="{{ $stepThree.State }}">
+          <h3 tabindex="-1">{{ $stepThree.Title }}</h3>
           <p>Copy this webhook into Plex (<em>Settings → Webhooks</em>) so Plaxt can scrobble automatically.</p>
           <div class="copy-field">
-            <pre id="onboarding-webhook">{{.Onboarding.WebhookURL}}</pre>
-            <button type="button" class="button-secondary js-copy-webhook" data-copy-target="#onboarding-webhook">Copy webhook URL</button>
+            <pre id="onboarding-webhook">{{ .Onboarding.WebhookURL }}</pre>
+            <button type="button" class="button-secondary js-copy-webhook" data-copy-target="#onboarding-webhook">
+              Copy webhook URL
+            </button>
           </div>
           <div class="wizard-actions wizard-actions--center">
             <button type="button" class="button-ghost js-reset-onboarding">Start Over</button>
+          </div>
+        </div>
+      </section>
+
+      {{/* Family Account wizard */}}
+      {{ $familySteps := .Family.Steps }}
+      {{ $familyStepOne := index $familySteps 0 }}
+      {{ $familyStepTwo := index $familySteps 1 }}
+      {{ $familyStepThree := index $familySteps 2 }}
+      <section class="wizard-section {{ if ne .Mode "family" }}mode-hidden{{ end }}" data-mode-section="family">
+        <div class="wizard-progress">
+          <div
+            class="wizard-progress-item"
+            data-state="{{ $familyStepOne.State }}"
+            data-step-id="{{ $familyStepOne.ID }}"
+          >
+            <div class="wizard-progress-title">{{ $familyStepOne.Title }}</div>
+            <p>{{ $familyStepOne.Description }}</p>
+            {{ if and (ne $familyStepOne.Summary "") (eq $familyStepOne.State "complete") }}
+              <p class="step-complete-summary">{{ $familyStepOne.Summary }}</p>
+            {{ end }}
+          </div>
+          <div
+            class="wizard-progress-item"
+            data-state="{{ $familyStepTwo.State }}"
+            data-step-id="{{ $familyStepTwo.ID }}"
+          >
+            <div class="wizard-progress-title">{{ $familyStepTwo.Title }}</div>
+            <p>{{ $familyStepTwo.Description }}</p>
+            {{ if and (ne $familyStepTwo.Summary "") (eq $familyStepTwo.State "complete") }}
+              <p class="step-complete-summary">{{ $familyStepTwo.Summary }}</p>
+            {{ end }}
+          </div>
+          <div
+            class="wizard-progress-item"
+            data-state="{{ $familyStepThree.State }}"
+            data-step-id="{{ $familyStepThree.ID }}"
+            data-result="{{ .Family.Result }}"
+          >
+            <div class="wizard-progress-title">{{ $familyStepThree.Title }}</div>
+            <p>{{ $familyStepThree.Description }}</p>
+            {{ if and (ne $familyStepThree.Summary "") (eq $familyStepThree.State "complete") }}
+              <p class="step-complete-summary">{{ $familyStepThree.Summary }}</p>
+            {{ end }}
+          </div>
+        </div>
+
+        {{ with .Family.Banner }}
+          <div class="banner banner-{{ .Type }}" role="status">{{ .Message }}</div>
+        {{ end }}
+
+
+        <div class="wizard-step" data-step-id="{{ $familyStepOne.ID }}" data-state="{{ $familyStepOne.State }}">
+          <h3 tabindex="-1">{{ $familyStepOne.Title }}</h3>
+
+          <form class="js-family-form" novalidate>
+            <label for="family-plex-username">Plex username (shared account)</label>
+            <input
+              id="family-plex-username"
+              class="input-field js-family-plex-username"
+              name="plex_username"
+              autocomplete="username"
+              value="{{ .Family.PlexUsername }}"
+              required
+            />
+
+            <label>Family member labels (2-10 required)</label>
+            <div class="member-list js-member-list">
+              {{ range $index, $label := .Family.MemberLabels }}
+                <div class="member-item" data-index="{{ $index }}">
+                  <input
+                    class="input-field js-member-label"
+                    name="member_label"
+                    value="{{ $label }}"
+                    placeholder="e.g., Dad, Mom, Alex"
+                    maxlength="50"
+                    required
+                  />
+                  <button
+                    type="button"
+                    class="button-icon js-remove-member"
+                    title="Remove member"
+                    {{ if lt (len $.Family.MemberLabels) 3 }}disabled{{ end }}
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                  </button>
+                </div>
+              {{ else }}
+                <div class="member-item" data-index="0">
+                  <input
+                    class="input-field js-member-label"
+                    name="member_label"
+                    placeholder="e.g., Dad"
+                    maxlength="50"
+                    required
+                  />
+                  <button type="button" class="button-icon js-remove-member" title="Remove member" disabled>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                  </button>
+                </div>
+                <div class="member-item" data-index="1">
+                  <input
+                    class="input-field js-member-label"
+                    name="member_label"
+                    placeholder="e.g., Mom"
+                    maxlength="50"
+                    required
+                  />
+                  <button type="button" class="button-icon js-remove-member" title="Remove member" disabled>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                  </button>
+                </div>
+              {{ end }}
+            </div>
+
+            <button
+              type="button"
+              class="button-secondary js-add-member"
+              {{ if ge (len .Family.MemberLabels) 10 }}disabled{{ end }}
+            >
+              + Add Another Member
+            </button>
+
+            <p class="field-error js-family-error"></p>
+            <div class="wizard-actions">
+              <button type="submit" class="button-primary">Continue to Authorization</button>
+              <button type="button" class="button-ghost js-reset-family">Start Over</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="wizard-step" data-step-id="{{ $familyStepTwo.ID }}" data-state="{{ $familyStepTwo.State }}">
+          <h3 tabindex="-1">{{ $familyStepTwo.Title }}</h3>
+          <p>
+            Each family member must authorize their own Trakt account. Click "Authorize" to open a new window for each
+            person.
+          </p>
+
+          <div class="authorization-table">
+            <table class="member-auth-table">
+              <thead>
+                <tr>
+                  <th>Family Member</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody class="js-member-auth-list">
+                {{ range .Family.Members }}
+                  <tr data-member-id="{{ .ID }}">
+                    <td><strong>{{ .TempLabel }}</strong></td>
+                    <td>
+                      <span class="status-badge status-{{ .AuthorizationStatus }} js-member-status">
+                        {{ if eq .AuthorizationStatus "pending" }}Pending{{ end }}
+                        {{ if eq .AuthorizationStatus "authorized" }}✓ Authorized{{ end }}
+                        {{ if eq .AuthorizationStatus "failed" }}✗ Failed{{ end }}
+                      </span>
+                    </td>
+                    <td>
+                      {{ if eq .AuthorizationStatus "pending" }}
+                        <button type="button" class="button-secondary js-authorize-member" data-member-id="{{ .ID }}">
+                          Authorize
+                        </button>
+                      {{ else if eq .AuthorizationStatus "failed" }}
+                        <button type="button" class="button-secondary js-authorize-member" data-member-id="{{ .ID }}">
+                          Retry
+                        </button>
+                      {{ else }}
+                        <span class="text-success">{{ .TraktUsername }}</span>
+                      {{ end }}
+                    </td>
+                  </tr>
+                {{ end }}
+              </tbody>
+            </table>
+          </div>
+
+          <p class="field-info js-auth-progress">0 of {{ len .Family.Members }} members authorized</p>
+          <p class="field-error js-family-auth-error"></p>
+
+          <div class="wizard-actions">
+            <button type="button" class="button-primary js-family-complete" disabled>Continue to Webhook</button>
+          </div>
+        </div>
+
+        <div class="wizard-step" data-step-id="{{ $familyStepThree.ID }}" data-state="{{ $familyStepThree.State }}">
+          <h3 tabindex="-1">{{ $familyStepThree.Title }}</h3>
+          <p>Your family account is ready! Copy this single webhook URL and add it to Plex.</p>
+          <p>
+            <strong>Note:</strong> All {{ len .Family.Members }} family members will receive scrobbles from this one
+            Plex account.
+          </p>
+
+          <div class="copy-field">
+            <pre id="family-webhook">{{ .Family.WebhookURL }}</pre>
+            <button type="button" class="button-secondary js-copy-webhook" data-copy-target="#family-webhook">
+              Copy Webhook URL
+            </button>
+          </div>
+
+          <div class="webhook-instructions">
+            <h4>Configure Plex</h4>
+            <ol>
+              <li>Open Plex and go to <strong>Settings → Webhooks</strong></li>
+              <li>Click "Add Webhook"</li>
+              <li>Paste the URL above</li>
+              <li>Save and you're done!</li>
+            </ol>
+          </div>
+
+          <div class="member-summary">
+            <h4>Family Members Configured</h4>
+            <ul>
+              {{ range .Family.Members }}
+                <li>{{ .TempLabel }} → <strong>{{ .TraktUsername }}</strong></li>
+              {{ end }}
+            </ul>
+          </div>
+
+          <div class="wizard-actions wizard-actions--center">
+            <button type="button" class="button-ghost js-reset-family">Start Over</button>
+            <a href="/admin" class="button-primary">View Admin Panel</a>
           </div>
         </div>
       </section>
@@ -119,59 +490,82 @@
       {{ $manualStepOne := index $manualSteps 0 }}
       {{ $manualStepTwo := index $manualSteps 1 }}
       {{ $manualStepThree := index $manualSteps 2 }}
-      <section class="wizard-section {{if ne .Mode "renew"}}mode-hidden{{end}}" data-mode-section="renew">
+      <section class="wizard-section {{ if ne .Mode "renew" }}mode-hidden{{ end }}" data-mode-section="renew">
         <div class="wizard-progress">
-          <div class="wizard-progress-item" data-state="{{$manualStepOne.State}}" data-step-id="{{$manualStepOne.ID}}">
-            <div class="wizard-progress-title">{{$manualStepOne.Title}}</div>
-            <p>{{$manualStepOne.Description}}</p>
-            {{if and (ne $manualStepOne.Summary "") (eq $manualStepOne.State "complete")}}
-              <p class="step-complete-summary">{{$manualStepOne.Summary}}</p>
-            {{end}}
+          <div
+            class="wizard-progress-item"
+            data-state="{{ $manualStepOne.State }}"
+            data-step-id="{{ $manualStepOne.ID }}"
+          >
+            <div class="wizard-progress-title">{{ $manualStepOne.Title }}</div>
+            <p>{{ $manualStepOne.Description }}</p>
+            {{ if and (ne $manualStepOne.Summary "") (eq $manualStepOne.State "complete") }}
+              <p class="step-complete-summary">{{ $manualStepOne.Summary }}</p>
+            {{ end }}
           </div>
-          <div class="wizard-progress-item" data-state="{{$manualStepTwo.State}}" data-step-id="{{$manualStepTwo.ID}}">
-            <div class="wizard-progress-title">{{$manualStepTwo.Title}}</div>
-            <p>{{$manualStepTwo.Description}}</p>
-            {{if and (ne $manualStepTwo.Summary "") (eq $manualStepTwo.State "complete")}}
-              <p class="step-complete-summary">{{$manualStepTwo.Summary}}</p>
-            {{end}}
+          <div
+            class="wizard-progress-item"
+            data-state="{{ $manualStepTwo.State }}"
+            data-step-id="{{ $manualStepTwo.ID }}"
+          >
+            <div class="wizard-progress-title">{{ $manualStepTwo.Title }}</div>
+            <p>{{ $manualStepTwo.Description }}</p>
+            {{ if and (ne $manualStepTwo.Summary "") (eq $manualStepTwo.State "complete") }}
+              <p class="step-complete-summary">{{ $manualStepTwo.Summary }}</p>
+            {{ end }}
           </div>
-          <div class="wizard-progress-item" data-state="{{$manualStepThree.State}}" data-step-id="{{$manualStepThree.ID}}" data-result="{{.Manual.Result}}">
-            <div class="wizard-progress-title">{{$manualStepThree.Title}}</div>
-            <p>{{$manualStepThree.Description}}</p>
-            {{if and (ne $manualStepThree.Summary "") (eq $manualStepThree.State "complete")}}
-              <p class="step-complete-summary">{{$manualStepThree.Summary}}</p>
-            {{end}}
+          <div
+            class="wizard-progress-item"
+            data-state="{{ $manualStepThree.State }}"
+            data-step-id="{{ $manualStepThree.ID }}"
+            data-result="{{ .Manual.Result }}"
+          >
+            <div class="wizard-progress-title">{{ $manualStepThree.Title }}</div>
+            <p>{{ $manualStepThree.Description }}</p>
+            {{ if and (ne $manualStepThree.Summary "") (eq $manualStepThree.State "complete") }}
+              <p class="step-complete-summary">{{ $manualStepThree.Summary }}</p>
+            {{ end }}
           </div>
         </div>
 
-        {{if .Manual.HasUsers}}
-          {{with .Manual.Banner}}
-            <div class="banner banner-{{.Type}}" role="status">
-              <p class="banner-message">{{.Message}}</p>
-              {{if .Detail}}<p class="banner-detail">{{.Detail}}</p>{{end}}
-              {{if and (ne .Type "success") .CorrelationID (eq $manualStepThree.State "active")}}
+        {{ if .Manual.HasUsers }}
+          {{ with .Manual.Banner }}
+            <div class="banner banner-{{ .Type }}" role="status">
+              <p class="banner-message">{{ .Message }}</p>
+              {{ if .Detail }}<p class="banner-detail">{{ .Detail }}</p>{{ end }}
+              {{ if and (ne .Type "success") .CorrelationID (eq $manualStepThree.State "active") }}
                 <p class="banner-correlation">
                   <span class="banner-correlation-label">Incident ID:</span>
-                  <code class="banner-correlation-value">{{.CorrelationID}}</code>
+                  <code class="banner-correlation-value">{{ .CorrelationID }}</code>
                 </p>
-              {{end}}
-              {{if and (or (eq .Type "error") (eq .Type "cancelled")) (eq $manualStepThree.State "active")}}
+              {{ end }}
+              {{ if and (or (eq .Type "error") (eq .Type "cancelled")) (eq $manualStepThree.State "active") }}
                 <div class="banner-actions">
                   <button type="button" class="button-secondary js-reset-manual">Start Over</button>
                 </div>
-              {{end}}
+              {{ end }}
             </div>
-          {{end}}
+          {{ end }}
 
-          <div class="wizard-step" data-step-id="{{$manualStepOne.ID}}" data-state="{{$manualStepOne.State}}">
-            <h3 tabindex="-1">{{$manualStepOne.Title}}</h3>
+
+          <div class="wizard-step" data-step-id="{{ $manualStepOne.ID }}" data-state="{{ $manualStepOne.State }}">
+            <h3 tabindex="-1">{{ $manualStepOne.Title }}</h3>
             <p>Select the user whose tokens you need to refresh.</p>
             <label for="manual-user">Plaxt user</label>
             <select id="manual-user" class="input-field js-renew-select">
               <option value="">Choose a user…</option>
-              {{range .Manual.Users}}
-                <option value="{{.ID}}" data-username="{{.Username}}" data-display-name="{{.TraktDisplayName}}" data-webhook="{{.WebhookURL}}" data-last-updated="{{.LastUpdated}}" {{if eq $.Manual.SelectedID .ID}}selected{{end}}>{{.DisplayLabel}}</option>
-              {{end}}
+              {{ range .Manual.Users }}
+                <option
+                  value="{{ .ID }}"
+                  data-username="{{ .Username }}"
+                  data-display-name="{{ .TraktDisplayName }}"
+                  data-webhook="{{ .WebhookURL }}"
+                  data-last-updated="{{ .LastUpdated }}"
+                  {{ if eq $.Manual.SelectedID .ID }}selected{{ end }}
+                >
+                  {{ .DisplayLabel }}
+                </option>
+              {{ end }}
             </select>
             <p class="field-error js-renew-error"></p>
             <div class="wizard-actions">
@@ -179,61 +573,99 @@
             </div>
           </div>
 
-          <div class="wizard-step" data-step-id="{{$manualStepTwo.ID}}" data-state="{{$manualStepTwo.State}}">
-            <h3 tabindex="-1">{{$manualStepTwo.Title}}</h3>
+          <div class="wizard-step" data-step-id="{{ $manualStepTwo.ID }}" data-state="{{ $manualStepTwo.State }}">
+            <h3 tabindex="-1">{{ $manualStepTwo.Title }}</h3>
             <p>Confirm the webhook details before you continue to Trakt.</p>
             <div class="wizard-summary">
-              <p><strong>Plex user:</strong> <span class="js-manual-summary-name">{{if .Manual.SelectedUser}}{{.Manual.SelectedUser.Username}}{{if .Manual.SelectedUser.TraktDisplayName}} ({{.Manual.SelectedUser.TraktDisplayName}}){{end}}{{else}}—{{end}}</span></p>
-              <p><strong>Trakt account:</strong> <span class="js-manual-summary-display">{{if .Manual.DisplayName}}{{.Manual.DisplayName}}{{else if .Manual.SelectedUser}}{{.Manual.SelectedUser.TraktDisplayName}}{{else}}—{{end}}</span></p>
-              <p><strong>Webhook:</strong> <span class="js-manual-summary-webhook">{{if .Manual.WebhookURL}}{{.Manual.WebhookURL}}{{else}}—{{end}}</span></p>
+              <p>
+                <strong>Plex user:</strong>
+                <span class="js-manual-summary-name"
+                  >{{ if .Manual.SelectedUser }}
+                    {{ .Manual.SelectedUser.Username }}{{ if .Manual.SelectedUser.TraktDisplayName }}
+                      ({{ .Manual.SelectedUser.TraktDisplayName }})
+                    {{ end }}
+                  {{ else }}
+                    —
+                  {{ end }}</span
+                >
+              </p>
+              <p>
+                <strong>Trakt account:</strong>
+                <span class="js-manual-summary-display"
+                  >{{ if .Manual.DisplayName }}
+                    {{ .Manual.DisplayName }}
+                  {{ else if .Manual.SelectedUser }}
+                    {{ .Manual.SelectedUser.TraktDisplayName }}
+                  {{ else }}
+                    —
+                  {{ end }}</span
+                >
+              </p>
+              <p>
+                <strong>Webhook:</strong>
+                <span class="js-manual-summary-webhook"
+                  >{{ if .Manual.WebhookURL }}{{ .Manual.WebhookURL }}{{ else }}—{{ end }}</span
+                >
+              </p>
             </div>
             <div class="wizard-actions">
               <button type="button" class="button-primary js-manual-start">Update API token</button>
             </div>
           </div>
 
-          <div class="wizard-step" data-step-id="{{$manualStepThree.ID}}" data-state="{{$manualStepThree.State}}">
-            <h3 tabindex="-1">{{$manualStepThree.Title}}</h3>
-            {{with .Manual.Banner}}
-              <p>{{.Message}}</p>
-            {{else}}
+          <div class="wizard-step" data-step-id="{{ $manualStepThree.ID }}" data-state="{{ $manualStepThree.State }}">
+            <h3 tabindex="-1">{{ $manualStepThree.Title }}</h3>
+            {{ with .Manual.Banner }}
+              <p>{{ .Message }}</p>
+            {{ else }}
               <p>Results will appear here once you complete the manual renewal flow.</p>
-            {{end}}
-              {{if eq .Manual.Result "success"}}
+            {{ end }}
+            {{ if eq .Manual.Result "success" }}
               <div class="copy-field">
-                <pre id="manual-webhook">{{.Manual.WebhookURL}}</pre>
-                <button type="button" class="button-secondary js-copy-webhook" data-copy-target="#manual-webhook">Copy webhook URL</button>
+                <pre id="manual-webhook">{{ .Manual.WebhookURL }}</pre>
+                <button type="button" class="button-secondary js-copy-webhook" data-copy-target="#manual-webhook">
+                  Copy webhook URL
+                </button>
               </div>
               <div class="wizard-actions wizard-actions--center">
                 <button type="button" class="button-ghost js-reset-manual-success">Start Over</button>
               </div>
-              {{if .Manual.DisplayNameMissing}}
-                <form class="manual-display-form js-manual-display-form" data-user-id="{{.Manual.SelectedID}}">
+              {{ if .Manual.DisplayNameMissing }}
+                <form class="manual-display-form js-manual-display-form" data-user-id="{{ .Manual.SelectedID }}">
                   <label for="manual-display-name">Trakt display name (optional)</label>
-                  <input id="manual-display-name" class="input-field js-manual-display-input" name="display_name" maxlength="50" value="{{.Manual.DisplayName}}" autocomplete="off">
-                  <p class="field-help">Add the Trakt account name so maintainers can distinguish duplicate Plex usernames.</p>
+                  <input
+                    id="manual-display-name"
+                    class="input-field js-manual-display-input"
+                    name="display_name"
+                    maxlength="50"
+                    value="{{ .Manual.DisplayName }}"
+                    autocomplete="off"
+                  />
+                  <p class="field-help">
+                    Add the Trakt account name so maintainers can distinguish duplicate Plex usernames.
+                  </p>
                   <p class="field-error js-manual-display-error"></p>
                   <p class="field-success js-manual-display-success"></p>
                   <div class="wizard-actions">
                     <button type="submit" class="button-secondary">Save display name</button>
                   </div>
                 </form>
-              {{else}}
-                {{if .Manual.DisplayName}}
-                  <p><strong>Trakt account:</strong> {{.Manual.DisplayName}}</p>
-                {{end}}
-                {{if eq .Manual.DisplayNameWarning "truncated"}}
+              {{ else }}
+                {{ if .Manual.DisplayName }}
+                  <p><strong>Trakt account:</strong> {{ .Manual.DisplayName }}</p>
+                {{ end }}
+                {{ if eq .Manual.DisplayNameWarning "truncated" }}
                   <p class="field-warning">Trakt display name was truncated to 50 characters.</p>
-                {{end}}
-              {{end}}
-            {{end}}
+                {{ end }}
+              {{ end }}
+            {{ end }}
           </div>
-        {{else}}
-          <p class="empty-state">{{.Manual.EmptyMessage}}</p>
-        {{end}}
+        {{ else }}
+          <p class="empty-state">{{ .Manual.EmptyMessage }}</p>
+        {{ end }}
       </section>
     </div>
 
-  <script src="{{assetPath "js/index.js"}}"></script>
+    <script src="{{ assetPath "js/index.js" }}"></script>
   </body>
 </html>

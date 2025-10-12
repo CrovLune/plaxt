@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"crovlune/plaxt/lib/common"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -528,6 +529,307 @@ func (s *RedisStore) PurgeQueueForUser(ctx context.Context, userID string) (int,
 	}
 
 	return queueSize, nil
+}
+
+// ========== FAMILY GROUP STORAGE ==========
+
+const (
+	familyGroupPrefix     = "goplaxt:family_group:"
+	familyGroupPlexPrefix = "goplaxt:family_group:plex:"
+	groupMemberPrefix    = "goplaxt:group_member:"
+	groupMembersSetPrefix = "goplaxt:group_members:"
+)
+
+func (s RedisStore) CreateFamilyGroup(ctx context.Context, group *FamilyGroup) error {
+	groupKey := familyGroupPrefix + group.ID
+	plexKey := familyGroupPlexPrefix + group.PlexUsername
+
+	// Check if Plex username already exists
+	exists, err := s.client.Exists(ctx, plexKey).Result()
+	if err != nil {
+		return fmt.Errorf("failed to check plex username uniqueness: %w", err)
+	}
+	if exists > 0 {
+		return fmt.Errorf("plex username %s already exists", group.PlexUsername)
+	}
+
+	// Serialize family group
+	groupData, err := json.Marshal(group)
+	if err != nil {
+		return fmt.Errorf("failed to marshal family group: %w", err)
+	}
+
+	// Use pipeline for atomic operations
+	pipe := s.client.Pipeline()
+	pipe.Set(ctx, groupKey, groupData, 0)
+	pipe.Set(ctx, plexKey, group.ID, 0)
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create family group: %w", err)
+	}
+
+	return nil
+}
+
+func (s RedisStore) GetFamilyGroup(ctx context.Context, groupID string) (*FamilyGroup, error) {
+	groupKey := familyGroupPrefix + groupID
+	data, err := s.client.Get(ctx, groupKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get family group: %w", err)
+	}
+
+	var group FamilyGroup
+	if err := json.Unmarshal([]byte(data), &group); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal family group: %w", err)
+	}
+
+	return &group, nil
+}
+
+func (s RedisStore) GetFamilyGroupByPlex(ctx context.Context, plexUsername string) (*FamilyGroup, error) {
+	plexKey := familyGroupPlexPrefix + plexUsername
+	groupID, err := s.client.Get(ctx, plexKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get family group by plex username: %w", err)
+	}
+
+	return s.GetFamilyGroup(ctx, groupID)
+}
+
+func (s RedisStore) ListFamilyGroups(ctx context.Context) ([]*FamilyGroup, error) {
+	pattern := familyGroupPrefix + "*"
+	keys, err := s.client.Keys(ctx, pattern).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list family group keys: %w", err)
+	}
+
+	var groups []*FamilyGroup
+	for _, key := range keys {
+		// Skip Plex mapping keys (they contain group IDs, not JSON)
+		if strings.HasPrefix(key, familyGroupPlexPrefix) {
+			continue
+		}
+
+		data, err := s.client.Get(ctx, key).Result()
+		if err != nil {
+			slog.Error("failed to get family group data", "key", key, "error", err)
+			continue
+		}
+
+		var group FamilyGroup
+		if err := json.Unmarshal([]byte(data), &group); err != nil {
+			slog.Error("failed to unmarshal family group", "key", key, "error", err)
+			continue
+		}
+
+		groups = append(groups, &group)
+	}
+
+	return groups, nil
+}
+
+func (s RedisStore) DeleteFamilyGroup(ctx context.Context, groupID string) error {
+	// Get family group to find plex username
+	group, err := s.GetFamilyGroup(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("failed to get family group for deletion: %w", err)
+	}
+	if group == nil {
+		return nil // Already deleted
+	}
+
+	// Get all members to delete them
+	members, err := s.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("failed to list group members for deletion: %w", err)
+	}
+
+	// Use pipeline for atomic deletion
+	pipe := s.client.Pipeline()
+	
+	// Delete family group keys
+	groupKey := familyGroupPrefix + groupID
+	plexKey := familyGroupPlexPrefix + group.PlexUsername
+	pipe.Del(ctx, groupKey, plexKey)
+
+	// Delete all members
+	for _, member := range members {
+		memberKey := groupMemberPrefix + member.ID
+		pipe.Del(ctx, memberKey)
+	}
+
+	// Delete members set
+	membersSetKey := groupMembersSetPrefix + groupID
+	pipe.Del(ctx, membersSetKey)
+
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to delete family group: %w", err)
+	}
+
+	return nil
+}
+
+func (s RedisStore) AddGroupMember(ctx context.Context, member *GroupMember) error {
+	memberKey := groupMemberPrefix + member.ID
+	membersSetKey := groupMembersSetPrefix + member.FamilyGroupID
+
+	// Check if Trakt username already exists in this group
+	if member.TraktUsername != "" {
+		existing, err := s.GetGroupMemberByTrakt(ctx, member.FamilyGroupID, member.TraktUsername)
+		if err != nil {
+			return fmt.Errorf("failed to check for duplicate trakt username: %w", err)
+		}
+		if existing != nil {
+			return fmt.Errorf("trakt username %s already exists in this group", member.TraktUsername)
+		}
+	}
+
+	// Serialize member
+	memberData, err := json.Marshal(member)
+	if err != nil {
+		return fmt.Errorf("failed to marshal group member: %w", err)
+	}
+
+	// Use pipeline for atomic operations
+	pipe := s.client.Pipeline()
+	pipe.Set(ctx, memberKey, memberData, 0)
+	pipe.SAdd(ctx, membersSetKey, member.ID)
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to add group member: %w", err)
+	}
+
+	return nil
+}
+
+func (s RedisStore) GetGroupMember(ctx context.Context, memberID string) (*GroupMember, error) {
+	memberKey := groupMemberPrefix + memberID
+	data, err := s.client.Get(ctx, memberKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get group member: %w", err)
+	}
+
+	var member GroupMember
+	if err := json.Unmarshal([]byte(data), &member); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal group member: %w", err)
+	}
+
+	return &member, nil
+}
+
+func (s RedisStore) UpdateGroupMember(ctx context.Context, member *GroupMember) error {
+	memberKey := groupMemberPrefix + member.ID
+
+	// Serialize member
+	memberData, err := json.Marshal(member)
+	if err != nil {
+		return fmt.Errorf("failed to marshal group member: %w", err)
+	}
+
+	// Update member data
+	err = s.client.Set(ctx, memberKey, memberData, 0).Err()
+	if err != nil {
+		return fmt.Errorf("failed to update group member: %w", err)
+	}
+
+	return nil
+}
+
+func (s RedisStore) RemoveGroupMember(ctx context.Context, groupID, memberID string) error {
+	memberKey := groupMemberPrefix + memberID
+	membersSetKey := groupMembersSetPrefix + groupID
+
+	// Use pipeline for atomic deletion
+	pipe := s.client.Pipeline()
+	pipe.Del(ctx, memberKey)
+	pipe.SRem(ctx, membersSetKey, memberID)
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to remove group member: %w", err)
+	}
+
+	return nil
+}
+
+func (s RedisStore) ListGroupMembers(ctx context.Context, groupID string) ([]*GroupMember, error) {
+	membersSetKey := groupMembersSetPrefix + groupID
+	memberIDs, err := s.client.SMembers(ctx, membersSetKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group member IDs: %w", err)
+	}
+
+	var members []*GroupMember
+	for _, memberID := range memberIDs {
+		member, err := s.GetGroupMember(ctx, memberID)
+		if err != nil {
+			slog.Error("failed to get group member", "memberID", memberID, "error", err)
+			continue
+		}
+		if member != nil {
+			members = append(members, member)
+		}
+	}
+
+	return members, nil
+}
+
+func (s RedisStore) GetGroupMemberByTrakt(ctx context.Context, groupID, traktUsername string) (*GroupMember, error) {
+	members, err := s.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list group members: %w", err)
+	}
+
+	for _, member := range members {
+		if member.TraktUsername == traktUsername {
+			return member, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func (s RedisStore) EnqueueRetryItem(ctx context.Context, item *RetryQueueItem) error {
+	return ErrNotSupported
+}
+
+func (s RedisStore) ListDueRetryItems(ctx context.Context, now time.Time, limit int) ([]*RetryQueueItem, error) {
+	return nil, ErrNotSupported
+}
+
+func (s RedisStore) MarkRetrySuccess(ctx context.Context, id string) error {
+	return ErrNotSupported
+}
+
+func (s RedisStore) MarkRetryFailure(ctx context.Context, id string, attempt int, nextAttempt time.Time, lastErr string, permanent bool) error {
+	return ErrNotSupported
+}
+
+// ========== NOTIFICATION METHODS (UNSUPPORTED) ==========
+
+func (s RedisStore) CreateNotification(ctx context.Context, notification *Notification) error {
+	return ErrNotSupported
+}
+
+func (s RedisStore) GetNotifications(ctx context.Context, familyGroupID string, includeDismissed bool) ([]*Notification, error) {
+	return nil, ErrNotSupported
+}
+
+func (s RedisStore) DismissNotification(ctx context.Context, notificationID string) error {
+	return ErrNotSupported
+}
+
+func (s RedisStore) DeleteNotification(ctx context.Context, notificationID string) error {
+	return ErrNotSupported
 }
 
 // ========== FALLBACK BUFFER HELPERS ==========

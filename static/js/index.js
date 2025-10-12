@@ -27,9 +27,53 @@
   var manualDisplaySuccess = document.querySelector('.js-manual-display-success');
   var manualSteps = document.querySelectorAll('[data-mode-section="renew"] .wizard-step');
   var manualProgress = document.querySelectorAll('[data-mode-section="renew"] .wizard-progress-item');
+  var familySteps = document.querySelectorAll('[data-mode-section="family"] .wizard-step');
+  var familyProgress = document.querySelectorAll('[data-mode-section="family"] .wizard-progress-item');
   var copyButtons = document.querySelectorAll('.js-copy-webhook');
   var hasManual = body.dataset.hasManual === 'true';
   var maxDisplayNameLength = 50;
+
+  // Telemetry tracking
+  function getOnboardingStartTime() {
+    var stored = localStorage.getItem('plaxtOnboardingStartTime');
+    return stored ? parseInt(stored, 10) : null;
+  }
+
+  function setOnboardingStartTime() {
+    var now = Date.now();
+    localStorage.setItem('plaxtOnboardingStartTime', now.toString());
+    return now;
+  }
+
+  function calculateDuration() {
+    var startTime = getOnboardingStartTime();
+    if (!startTime) return 0;
+    return Date.now() - startTime;
+  }
+
+  function emitTelemetry(event, mode, success, durationMs) {
+    // Log to console for debugging
+    console.log('[Telemetry]', event, {
+      mode: mode,
+      success: success,
+      duration_ms: durationMs
+    });
+
+    // Send to backend
+    fetch('/api/telemetry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: event,
+        mode: mode,
+        success: success,
+        duration_ms: durationMs
+      })
+    }).catch(function(err) {
+      // Silently fail - telemetry should not block user experience
+      console.error('[Telemetry] Failed to send:', err);
+    });
+  }
 
   if (onboardingSummaryName && body.dataset.onboardingUsername) {
     onboardingSummaryName.textContent = body.dataset.onboardingUsername;
@@ -107,10 +151,39 @@
     }
   }
 
+  function refreshFamilyWizard() {
+    var result = (body.dataset.familyResult || '').toLowerCase();
+    var urlParams = new URLSearchParams(window.location.search);
+    var stepParam = (urlParams.get('step') || '').toLowerCase();
+    var target = 'setup';
+
+    // Check explicit step parameter first (from server redirect)
+    if (stepParam === 'webhook') {
+      target = 'webhook';
+    } else if (stepParam === 'authorize') {
+      target = 'authorize';
+    } else if (stepParam === 'setup') {
+      target = 'setup';
+    } else if (result === 'success') {
+      // Fallback: result-based logic
+      target = 'webhook';
+    } else if (result === 'error') {
+      target = 'setup';
+    } else {
+      // Fallback: localStorage-based logic
+      var storedFamily = localStorage.getItem('plaxtFamilyStep');
+      if (storedFamily === 'authorize' || storedFamily === 'webhook') {
+        target = storedFamily;
+      }
+    }
+    setStepStates(familySteps, familyProgress, target, 'family');
+  }
+
   function setMode(mode) {
-    if (mode !== 'renew' || !hasManual) {
+    if (mode !== 'renew' && mode !== 'family') {
       mode = 'onboarding';
     }
+    // Allow renew mode even if no users - show empty state message
     body.dataset.mode = mode;
     modeButtons.forEach(function(btn) {
       var target = btn.getAttribute('data-mode-toggle');
@@ -129,6 +202,12 @@
     history.replaceState({}, '', url);
     if (mode === 'renew') {
       refreshManualWizard();
+    } else if (mode === 'family') {
+      // Clear any existing family state when switching to family mode
+      localStorage.removeItem('plaxtFamilyStep');
+      sessionStorage.removeItem('familyState');
+      sessionStorage.removeItem('familyGroupId');
+      refreshFamilyWizard();
     } else {
       refreshOnboardingWizard();
     }
@@ -138,6 +217,8 @@
     var order = ['username', 'authorize', 'webhook'];
     if (stepElements === manualSteps) {
       order = ['select', 'confirm', 'result'];
+    } else if (stepElements === familySteps) {
+      order = ['setup', 'authorize', 'webhook'];
     }
     order.forEach(function(stepId, idx) {
       var state = 'future';
@@ -186,6 +267,16 @@
       localStorage.removeItem('plaxtManualSelectedName');
       localStorage.removeItem('plaxtManualSelectedUsername');
       localStorage.removeItem('plaxtManualSelectedDisplayName');
+    }
+  }
+
+  function resetFamilyStateIfComplete() {
+    // Only reset state if we're actually in family mode
+    if (body.dataset.familyResult) {
+      localStorage.removeItem('plaxtFamilyStep');
+      sessionStorage.removeItem('familyState');
+      sessionStorage.removeItem('familyGroupId');
+      localStorage.setItem('plaxtWizardMode', 'family');
     }
   }
 
@@ -257,7 +348,16 @@
 
   modeButtons.forEach(function(btn) {
     btn.addEventListener('click', function() {
-      setMode(btn.getAttribute('data-mode-toggle'));
+      var mode = btn.getAttribute('data-mode-toggle');
+      // Set the mode in URL parameters to ensure backend knows the selected mode
+      var url = new URL(window.location.href);
+      if (mode === 'renew') {
+        url.searchParams.set('mode', 'renew');
+      } else {
+        url.searchParams.delete('mode');
+      }
+      history.replaceState({}, '', url);
+      setMode(mode);
     });
   });
 
@@ -282,6 +382,13 @@
       if (onboardingSummaryName) {
         onboardingSummaryName.textContent = rawUsername;
       }
+
+      // Emit telemetry: onboarding_start for individual account
+      if (!getOnboardingStartTime()) {
+        setOnboardingStartTime();
+        emitTelemetry('onboarding_start', 'individual', null, 0);
+      }
+
       localStorage.setItem('plaxtOnboardingStep', 'authorize');
       localStorage.setItem('plaxtOnboardingUsername', normalizedUsername);
       updateURLForStep('authorize', { username: normalizedUsername, mode: 'onboarding' });
@@ -542,10 +649,23 @@
 
   refreshOnboardingWizard();
   refreshManualWizard();
+  refreshFamilyWizard();
+
+  // Emit telemetry for completed onboarding
+  if (onboardingResult === 'success') {
+    var urlParams = new URLSearchParams(window.location.search);
+    var urlMode = (urlParams.get('mode') || '').toLowerCase();
+    var mode = (urlMode === 'family') ? 'family' : 'individual';
+    var duration = calculateDuration();
+    if (duration > 0) {
+      emitTelemetry('onboarding_complete', mode, true, duration);
+      localStorage.removeItem('plaxtOnboardingStartTime');
+    }
+  }
 
   // Initialise mode - prioritize URL/server mode, then results, then localStorage
-  var urlParams = new URLSearchParams(window.location.search);
-  var urlMode = (urlParams.get('mode') || '').toLowerCase();
+  urlParams = new URLSearchParams(window.location.search);
+  urlMode = (urlParams.get('mode') || '').toLowerCase();
   var initialMode = body.dataset.mode || 'onboarding';
   var storedMode = localStorage.getItem('plaxtWizardMode');
 
@@ -564,12 +684,16 @@
   } else if (storedMode && storedMode === 'renew' && hasManual) {
     // Otherwise use stored mode if available
     initialMode = storedMode;
+  } else if (storedMode && storedMode === 'family') {
+    // Use stored family mode if available
+    initialMode = storedMode;
   }
   setMode(initialMode);
 
 
   resetOnboardingStateIfComplete();
   resetManualStateIfComplete();
+  resetFamilyStateIfComplete();
 
   // "Start Over" button for manual renewal reset
   var resetButton = document.querySelector('.js-reset-manual');
@@ -643,4 +767,365 @@
       window.location.href = url.toString();
     });
   }
+
+  // Family Account Wizard Logic
+  var familyForm = document.querySelector('.js-family-form');
+  var familyPlexInput = document.querySelector('.js-family-plex-username');
+  var familyError = document.querySelector('.js-family-error');
+  var familyAuthError = document.querySelector('.js-family-auth-error');
+  var memberList = document.querySelector('.js-member-list');
+  var addMemberButton = document.querySelector('.js-add-member');
+  var familyCompleteButton = document.querySelector('.js-family-complete');
+  var authProgress = document.querySelector('.js-auth-progress');
+
+  function showFamilyError(message) {
+    if (familyError) {
+      familyError.textContent = message;
+    }
+  }
+
+  function showFamilyAuthError(message) {
+    if (familyAuthError) {
+      familyAuthError.textContent = message;
+    }
+  }
+
+  function updateMemberButtons() {
+    if (!memberList) return;
+    var items = memberList.querySelectorAll('.member-item');
+    var count = items.length;
+
+    items.forEach(function(item) {
+      var removeBtn = item.querySelector('.js-remove-member');
+      if (removeBtn) {
+        removeBtn.disabled = count <= 2;
+      }
+    });
+
+    if (addMemberButton) {
+      addMemberButton.disabled = count >= 10;
+    }
+  }
+
+  if (addMemberButton) {
+    addMemberButton.addEventListener('click', function() {
+      if (!memberList) return;
+      var count = memberList.querySelectorAll('.member-item').length;
+
+      if (count >= 10) {
+        showFamilyError('Maximum 10 members allowed');
+        return;
+      }
+
+      var item = document.createElement('div');
+      item.className = 'member-item';
+      item.dataset.index = count;
+      item.innerHTML = '<input class="input-field js-member-label" name="member_label" placeholder="e.g., Member ' + (count + 1) + '" maxlength="50" required>' +
+        '<button type="button" class="button-icon js-remove-member" title="Remove member">' +
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+        '<line x1="18" y1="6" x2="6" y2="18"></line>' +
+        '<line x1="6" y1="6" x2="18" y2="18"></line>' +
+        '</svg>' +
+        '</button>';
+
+      memberList.appendChild(item);
+      updateMemberButtons();
+      if (familyError) familyError.textContent = '';
+    });
+  }
+
+  if (memberList) {
+    memberList.addEventListener('click', function(e) {
+      var removeBtn = e.target.closest('.js-remove-member');
+      if (!removeBtn) return;
+
+      var item = removeBtn.closest('.member-item');
+      var count = memberList.querySelectorAll('.member-item').length;
+
+      if (count <= 2) {
+        showFamilyError('Minimum 2 members required');
+        return;
+      }
+
+      item.remove();
+      updateMemberButtons();
+      if (familyError) familyError.textContent = '';
+    });
+  }
+
+  if (familyForm) {
+    familyForm.addEventListener('submit', function(e) {
+      e.preventDefault();
+
+      var plexUsername = familyPlexInput ? familyPlexInput.value.trim() : '';
+      var labelInputs = document.querySelectorAll('.js-member-label');
+      var labels = [];
+
+      labelInputs.forEach(function(input) {
+        var label = input.value.trim();
+        if (label.length > 0) {
+          labels.push(label);
+        }
+      });
+
+      if (!plexUsername) {
+        showFamilyError('Please enter a Plex username');
+        if (familyPlexInput) familyPlexInput.focus();
+        return;
+      }
+
+      if (labels.length < 2) {
+        showFamilyError('Minimum 2 family members required');
+        return;
+      }
+
+      if (labels.length > 10) {
+        showFamilyError('Maximum 10 family members allowed');
+        return;
+      }
+
+      var uniqueLabels = {};
+      var hasDuplicates = false;
+      labels.forEach(function(label) {
+        var lower = label.toLowerCase();
+        if (uniqueLabels[lower]) {
+          hasDuplicates = true;
+        }
+        uniqueLabels[lower] = true;
+      });
+
+      if (hasDuplicates) {
+        showFamilyError('Member labels must be unique');
+        return;
+      }
+
+      if (familyError) familyError.textContent = '';
+
+      // Emit telemetry: onboarding_start for family account
+      if (!getOnboardingStartTime()) {
+        setOnboardingStartTime();
+        emitTelemetry('onboarding_start', 'family', null, 0);
+      }
+
+      fetch('/oauth/family/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'family',
+          plex_username: plexUsername,
+          members: labels.map(function(label) {
+            return { temp_label: label };
+          })
+        })
+      }).then(function(response) {
+        return response.json().then(function(data) {
+          if (!response.ok) {
+            throw new Error(data.error || 'Failed to create family group');
+          }
+          return data;
+        });
+      }).then(function(data) {
+        sessionStorage.setItem('familyState', data.state);
+        sessionStorage.setItem('familyGroupId', data.family_group_id);
+        localStorage.setItem('plaxtFamilyStep', 'authorize');
+        updateURLForStep('authorize');
+        setStepStates(familySteps, familyProgress, 'authorize', 'family');
+        setMode('family');
+      }).catch(function(err) {
+        showFamilyError(err.message);
+      });
+    });
+  }
+
+  var memberAuthList = document.querySelector('.js-member-auth-list');
+  if (memberAuthList) {
+    memberAuthList.addEventListener('click', function(e) {
+      var authorizeBtn = e.target.closest('.js-authorize-member');
+      if (!authorizeBtn) return;
+
+      var memberId = authorizeBtn.dataset.memberId;
+      var state = sessionStorage.getItem('familyState');
+
+      if (!state) {
+        showFamilyAuthError('Session expired. Please start over.');
+        return;
+      }
+
+      var authUrl = root + '/authorize/family/member?state=' + encodeURIComponent(state) + '&member_id=' + encodeURIComponent(memberId) + '&prompt=login';
+      window.open(authUrl, '_blank', 'width=600,height=700');
+
+      pollMemberAuthorization(memberId);
+    });
+  }
+
+  function pollMemberAuthorization(memberId) {
+    var groupId = sessionStorage.getItem('familyGroupId');
+    if (!groupId) return;
+
+    var maxAttempts = 60;
+    var attempts = 0;
+
+    var interval = setInterval(function() {
+      attempts++;
+
+      fetch('/api/family-groups/' + encodeURIComponent(groupId) + '/members/' + encodeURIComponent(memberId))
+        .then(function(response) {
+          if (!response.ok) throw new Error('Failed to check status');
+          return response.json();
+        })
+        .then(function(member) {
+          updateMemberStatus(memberId, member.authorization_status, member.trakt_username);
+
+          if (member.authorization_status === 'authorized') {
+            clearInterval(interval);
+            checkAllAuthorized();
+          } else if (member.authorization_status === 'failed') {
+            clearInterval(interval);
+            showFamilyAuthError('Authorization failed for ' + member.temp_label);
+          }
+
+          if (attempts >= maxAttempts) {
+            clearInterval(interval);
+            showFamilyAuthError('Authorization timeout - please try again');
+          }
+        })
+        .catch(function() {
+          clearInterval(interval);
+          showFamilyAuthError('Failed to check authorization status');
+        });
+    }, 2000);
+  }
+
+  function updateMemberStatus(memberId, status, traktUsername) {
+    var row = document.querySelector('[data-member-id="' + memberId + '"]');
+    if (!row) return;
+
+    var statusBadge = row.querySelector('.js-member-status');
+    var actionCell = row.querySelector('td:last-child');
+
+    if (statusBadge) {
+      statusBadge.className = 'status-badge status-' + status + ' js-member-status';
+
+      if (status === 'authorized') {
+        statusBadge.textContent = '✓ Authorized';
+      } else if (status === 'failed') {
+        statusBadge.textContent = '✗ Failed';
+      } else {
+        statusBadge.textContent = 'Pending';
+      }
+    }
+
+    if (actionCell) {
+      if (status === 'authorized') {
+        actionCell.innerHTML = '<span class="text-success">' + (traktUsername || '') + '</span>';
+      } else if (status === 'failed') {
+        actionCell.innerHTML = '<button type="button" class="button-secondary js-authorize-member" data-member-id="' + memberId + '">Retry</button>';
+      }
+    }
+  }
+
+  function checkAllAuthorized() {
+    var statusBadges = document.querySelectorAll('.js-member-status');
+    var allAuthorized = true;
+    var authorizedCount = 0;
+
+    statusBadges.forEach(function(badge) {
+      if (badge.classList.contains('status-authorized')) {
+        authorizedCount++;
+      } else {
+        allAuthorized = false;
+      }
+    });
+
+    if (authProgress) {
+      authProgress.textContent = authorizedCount + ' of ' + statusBadges.length + ' members authorized';
+    }
+
+    if (familyCompleteButton) {
+      familyCompleteButton.disabled = !allAuthorized;
+    }
+
+    if (allAuthorized) {
+      localStorage.setItem('plaxtFamilyStep', 'webhook');
+      updateURLForStep('webhook');
+      setStepStates(familySteps, familyProgress, 'webhook', 'family');
+      setMode('family');
+    }
+  }
+
+  var resetFamilyButton = document.querySelector('.js-reset-family');
+  if (resetFamilyButton) {
+    resetFamilyButton.addEventListener('click', function() {
+      sessionStorage.removeItem('familyState');
+      sessionStorage.removeItem('familyGroupId');
+      localStorage.removeItem('plaxtFamilyStep');
+      localStorage.setItem('plaxtWizardMode', 'family');
+
+      var url = new URL(window.location.href);
+      url.searchParams.delete('result');
+      url.searchParams.delete('error');
+      url.searchParams.delete('step');
+      window.location.href = url.toString();
+    });
+  }
+
+  updateMemberButtons();
+
+  // Tooltip functionality
+  var tooltipTriggers = document.querySelectorAll('.tooltip-trigger');
+  tooltipTriggers.forEach(function(trigger) {
+    var tooltipId = trigger.getAttribute('data-tooltip-for');
+    var tooltip = document.querySelector('[data-tooltip-id="' + tooltipId + '"]');
+
+    if (!tooltip) return;
+
+    // Show tooltip on click
+    trigger.addEventListener('click', function(e) {
+      e.stopPropagation();
+
+      // Hide all other tooltips
+      document.querySelectorAll('.tooltip.is-visible').forEach(function(t) {
+        if (t !== tooltip) {
+          t.classList.remove('is-visible');
+        }
+      });
+
+      // Toggle this tooltip
+      tooltip.classList.toggle('is-visible');
+    });
+
+    // Show tooltip on hover
+    trigger.addEventListener('mouseenter', function() {
+      tooltip.classList.add('is-visible');
+    });
+
+    trigger.addEventListener('mouseleave', function() {
+      tooltip.classList.remove('is-visible');
+    });
+
+    // Keyboard accessibility
+    trigger.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        tooltip.classList.toggle('is-visible');
+      }
+      if (e.key === 'Escape') {
+        tooltip.classList.remove('is-visible');
+      }
+    });
+  });
+
+  // Close tooltips when clicking outside
+  document.addEventListener('click', function() {
+    document.querySelectorAll('.tooltip.is-visible').forEach(function(tooltip) {
+      tooltip.classList.remove('is-visible');
+    });
+  });
+
+  // Prevent tooltip clicks from bubbling
+  document.querySelectorAll('.tooltip').forEach(function(tooltip) {
+    tooltip.addEventListener('click', function(e) {
+      e.stopPropagation();
+    });
+  });
 })();

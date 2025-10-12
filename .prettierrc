@@ -1,0 +1,44 @@
+{
+    "printWidth": 120,
+    "tabWidth": 2,
+    "useTabs": false,
+    "semi": true,
+    "singleQuote": true,
+    "trailingComma": "es5",
+    "bracketSpacing": true,
+    "arrowParens": "always",
+    "endOfLine": "lf",
+    "plugins": ["prettier-plugin-go-template", "@prettier/plugin-xml"],
+    "overrides": [
+        {
+            "files": "*.svg",
+            "options": { "parser": "xml" }
+        },
+        {
+            "files": ["**/*.html", "**/*.gohtml", "**/*.tmpl", "**/*.gotmpl"],
+            "options": { "parser": "go-template" }
+        },
+        {
+            "files": [
+                "*.yml",
+                "*.yaml"
+            ],
+            "options": {
+                "tabWidth": 2,
+                "singleQuote": false,
+                "useTabs": true,
+                "bracketSpacing": false,
+                "proseWrap": "preserve"
+            }
+        },
+        {
+            "files": [
+                ".env",
+                "*.env"
+            ],
+            "options": {
+                "parser": "dotenv"
+            }
+        }
+    ]
+}

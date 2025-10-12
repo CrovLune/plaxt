@@ -12,6 +12,7 @@ import (
 
 	// Postgres db library loading
 	"crovlune/plaxt/lib/common"
+
 	_ "github.com/lib/pq"
 )
 
@@ -74,6 +75,80 @@ func NewPostgresqlClient(connStr string) *sql.DB {
 		panic(err)
 	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_queued_scrobbles_retry ON queued_scrobbles(user_id, retry_count) WHERE retry_count > 0`); err != nil {
+		panic(err)
+	}
+
+	// Create family account tables (migration)
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS family_groups (
+			id VARCHAR(255) PRIMARY KEY,
+			plex_username VARCHAR(255) UNIQUE NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)
+	`); err != nil {
+		panic(err)
+	}
+
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS group_members (
+			id VARCHAR(255) PRIMARY KEY,
+			family_group_id VARCHAR(255) NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
+			temp_label VARCHAR(100) NOT NULL,
+			trakt_username VARCHAR(255),
+			access_token TEXT,
+			refresh_token TEXT,
+			token_expiry TIMESTAMP,
+			authorization_status VARCHAR(50) NOT NULL DEFAULT 'pending',
+			created_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)
+	`); err != nil {
+		panic(err)
+	}
+
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS retry_queue_items (
+			id VARCHAR(255) PRIMARY KEY,
+			family_group_id VARCHAR(255) NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
+			group_member_id VARCHAR(255) NOT NULL REFERENCES group_members(id) ON DELETE CASCADE,
+			payload JSONB NOT NULL,
+			attempt_count SMALLINT NOT NULL DEFAULT 0,
+			next_attempt_at TIMESTAMP NOT NULL,
+			last_error TEXT,
+			status VARCHAR(50) NOT NULL DEFAULT 'queued',
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)
+	`); err != nil {
+		panic(err)
+	}
+
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS notifications (
+			id VARCHAR(255) PRIMARY KEY,
+			family_group_id VARCHAR(255) NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
+			group_member_id VARCHAR(255) REFERENCES group_members(id) ON DELETE CASCADE,
+			notification_type VARCHAR(50) NOT NULL,
+			message TEXT NOT NULL,
+			metadata JSONB,
+			dismissed BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)
+	`); err != nil {
+		panic(err)
+	}
+
+	// Create indexes for family account tables
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_family_groups_plex_username ON family_groups(plex_username)`); err != nil {
+		panic(err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_group_members_family_group_id ON group_members(family_group_id)`); err != nil {
+		panic(err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_retry_queue_due_items ON retry_queue_items(status, next_attempt_at)`); err != nil {
+		panic(err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_notifications_family_group ON notifications(family_group_id, dismissed, created_at DESC)`); err != nil {
 		panic(err)
 	}
 
@@ -568,4 +643,154 @@ func (s *PostgresqlStore) flushFallbackBuffer(ctx context.Context, userID string
 		"user_id", userID,
 		"event_count", len(events),
 	)
+}
+
+// ========== NOTIFICATION METHODS ==========
+
+// CreateNotification creates a new persistent notification for a family group
+func (s *PostgresqlStore) CreateNotification(ctx context.Context, notification *Notification) error {
+	if err := notification.Validate(); err != nil {
+		return err
+	}
+
+	// Set created timestamp if not set
+	if notification.CreatedAt.IsZero() {
+		notification.CreatedAt = time.Now()
+	}
+
+	// Serialize metadata to JSONB if present
+	var metadataJSON sql.NullString
+	if notification.Metadata != nil && len(notification.Metadata) > 0 {
+		metadataJSON = sql.NullString{String: string(notification.Metadata), Valid: true}
+	}
+
+	// Prepare member ID (nullable)
+	var memberID sql.NullString
+	if notification.GroupMemberID != nil {
+		memberID = sql.NullString{String: *notification.GroupMemberID, Valid: true}
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO notifications
+			(id, family_group_id, group_member_id, notification_type, message, metadata, dismissed, created_at)
+		VALUES
+			($1, $2, $3, $4, $5, $6, $7, $8)
+	`,
+		notification.ID,
+		notification.FamilyGroupID,
+		memberID,
+		notification.Type,
+		notification.Message,
+		metadataJSON,
+		notification.Dismissed,
+		notification.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create notification: %w", err)
+	}
+
+	slog.Info("notification created",
+		"notification_id", notification.ID,
+		"family_group_id", notification.FamilyGroupID,
+		"type", notification.Type,
+	)
+
+	return nil
+}
+
+// GetNotifications retrieves all notifications for a family group
+func (s *PostgresqlStore) GetNotifications(ctx context.Context, familyGroupID string, includeDismissed bool) ([]*Notification, error) {
+	query := `
+		SELECT id, family_group_id, group_member_id, notification_type, message, metadata, dismissed, created_at
+		FROM notifications
+		WHERE family_group_id = $1
+	`
+	if !includeDismissed {
+		query += " AND dismissed = FALSE"
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := s.db.QueryContext(ctx, query, familyGroupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query notifications: %w", err)
+	}
+	defer rows.Close()
+
+	var notifications []*Notification
+	for rows.Next() {
+		var n Notification
+		var memberID sql.NullString
+		var metadata sql.NullString
+
+		err := rows.Scan(
+			&n.ID,
+			&n.FamilyGroupID,
+			&memberID,
+			&n.Type,
+			&n.Message,
+			&metadata,
+			&n.Dismissed,
+			&n.CreatedAt,
+		)
+		if err != nil {
+			slog.Warn("failed to scan notification",
+				"family_group_id", familyGroupID,
+				"error", err,
+			)
+			continue
+		}
+
+		if memberID.Valid {
+			n.GroupMemberID = &memberID.String
+		}
+		if metadata.Valid {
+			n.Metadata = json.RawMessage(metadata.String)
+		}
+
+		notifications = append(notifications, &n)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	return notifications, nil
+}
+
+// DismissNotification marks a notification as dismissed
+func (s *PostgresqlStore) DismissNotification(ctx context.Context, notificationID string) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE notifications
+		SET dismissed = TRUE
+		WHERE id = $1
+	`, notificationID)
+	if err != nil {
+		return fmt.Errorf("failed to dismiss notification: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrNotificationNotFound
+	}
+
+	slog.Info("notification dismissed", "notification_id", notificationID)
+	return nil
+}
+
+// DeleteNotification permanently removes a notification
+func (s *PostgresqlStore) DeleteNotification(ctx context.Context, notificationID string) error {
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM notifications WHERE id = $1
+	`, notificationID)
+	if err != nil {
+		return fmt.Errorf("failed to delete notification: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrNotificationNotFound
+	}
+
+	slog.Info("notification deleted", "notification_id", notificationID)
+	return nil
 }

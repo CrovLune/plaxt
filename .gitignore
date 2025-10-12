@@ -12,6 +12,7 @@ static/dist/
 plaxt-test
 plaxt
 docker-compose.yml
+node_modules/
 
 # Runtime data
 keystore/

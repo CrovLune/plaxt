@@ -2,8 +2,29 @@ package store
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"crovlune/plaxt/lib/common"
+)
+
+var (
+	// ErrNotSupported indicates the underlying store does not implement an operation.
+	ErrNotSupported = errors.New("store: operation not supported")
+	// ErrFamilyGroupNotFound is returned when a family group lookup fails.
+	ErrFamilyGroupNotFound = errors.New("store: family group not found")
+	// ErrGroupMemberNotFound is returned when a group member lookup fails.
+	ErrGroupMemberNotFound = errors.New("store: group member not found")
+	// ErrDuplicateFamilyGroup signals an attempt to create a duplicate family group.
+	ErrDuplicateFamilyGroup = errors.New("store: family group already exists")
+	// ErrDuplicateGroupMember signals duplicate Trakt usernames within a group.
+	ErrDuplicateGroupMember = errors.New("store: group member already exists")
+	// ErrRetryItemNotFound indicates a retry queue item no longer exists.
+	ErrRetryItemNotFound = errors.New("store: retry queue item not found")
+	// ErrInvalidNotification is returned when a notification fails validation.
+	ErrInvalidNotification = errors.New("store: invalid notification")
+	// ErrNotificationNotFound is returned when a notification lookup fails.
+	ErrNotificationNotFound = errors.New("store: notification not found")
 )
 
 // Store is the interface for All the store types
@@ -100,6 +121,33 @@ type Store interface {
 	//   - int: Number of events purged
 	//   - error: storage failure
 	PurgeQueueForUser(ctx context.Context, userID string) (int, error)
+
+	// ========== FAMILY GROUP METHODS ==========
+
+	CreateFamilyGroup(ctx context.Context, group *FamilyGroup) error
+	GetFamilyGroup(ctx context.Context, groupID string) (*FamilyGroup, error)
+	GetFamilyGroupByPlex(ctx context.Context, plexUsername string) (*FamilyGroup, error)
+	ListFamilyGroups(ctx context.Context) ([]*FamilyGroup, error)
+	DeleteFamilyGroup(ctx context.Context, groupID string) error
+
+	AddGroupMember(ctx context.Context, member *GroupMember) error
+	GetGroupMember(ctx context.Context, memberID string) (*GroupMember, error)
+	UpdateGroupMember(ctx context.Context, member *GroupMember) error
+	RemoveGroupMember(ctx context.Context, groupID, memberID string) error
+	ListGroupMembers(ctx context.Context, groupID string) ([]*GroupMember, error)
+	GetGroupMemberByTrakt(ctx context.Context, groupID, traktUsername string) (*GroupMember, error)
+
+	EnqueueRetryItem(ctx context.Context, item *RetryQueueItem) error
+	ListDueRetryItems(ctx context.Context, now time.Time, limit int) ([]*RetryQueueItem, error)
+	MarkRetrySuccess(ctx context.Context, id string) error
+	MarkRetryFailure(ctx context.Context, id string, attempt int, nextAttempt time.Time, lastErr string, permanent bool) error
+
+	// ========== NOTIFICATION METHODS ==========
+
+	CreateNotification(ctx context.Context, notification *Notification) error
+	GetNotifications(ctx context.Context, familyGroupID string, includeDismissed bool) ([]*Notification, error)
+	DismissNotification(ctx context.Context, notificationID string) error
+	DeleteNotification(ctx context.Context, notificationID string) error
 }
 
 // Utils
