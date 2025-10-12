@@ -18,7 +18,7 @@ func TestExpiredTokensTriggerBanner(t *testing.T) {
 	
 	t.Run("expired_token_notification", func(t *testing.T) {
 		// Create a family group with a member whose token is expired
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "test-group-1",
 			PlexUsername: "ExpiredTokenTV",
 			CreatedAt:    time.Now(),
@@ -55,7 +55,7 @@ func TestExpiredTokensTriggerBanner(t *testing.T) {
 func TestDuplicateTraktAttempt(t *testing.T) {
 	t.Run("duplicate_trakt_rejection", func(t *testing.T) {
 		// Create a family group
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "test-group-2",
 			PlexUsername: "DuplicateTV",
 			CreatedAt:    time.Now(),
@@ -97,7 +97,7 @@ func TestDuplicateTraktAttempt(t *testing.T) {
 func TestTenMemberLimit(t *testing.T) {
 	t.Run("ten_member_limit", func(t *testing.T) {
 		// Create a family group
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "test-group-3",
 			PlexUsername: "LimitTV",
 			CreatedAt:    time.Now(),
@@ -119,7 +119,7 @@ func TestTenMemberLimit(t *testing.T) {
 		}
 
 		// Try to create an 11th member (should be rejected)
-		excessMember := &store.GroupMember{
+		_ = &store.GroupMember{
 			ID:                  "member-11",
 			FamilyGroupID:       "test-group-3",
 			TempLabel:           "ExcessUser",
@@ -143,7 +143,7 @@ func TestTenMemberLimit(t *testing.T) {
 func TestConcurrentWebhooksOrdering(t *testing.T) {
 	t.Run("concurrent_webhook_ordering", func(t *testing.T) {
 		// Create a family group with multiple members
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "test-group-4",
 			PlexUsername: "ConcurrentTV",
 			CreatedAt:    time.Now(),
@@ -225,7 +225,7 @@ func TestQueuePermanentFailureNotification(t *testing.T) {
 func TestNoActiveViewersScenario(t *testing.T) {
 	t.Run("no_active_viewers", func(t *testing.T) {
 		// Create a family group with authorized members
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "test-group-6",
 			PlexUsername: "NoViewerTV",
 			CreatedAt:    time.Now(),
@@ -280,7 +280,7 @@ func TestNoActiveViewersScenario(t *testing.T) {
 func TestSingleMemberFailureDoesNotBlockOthers(t *testing.T) {
 	t.Run("single_member_failure_isolation", func(t *testing.T) {
 		// Create a family group with multiple members
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "test-group-7",
 			PlexUsername: "FailureIsolationTV",
 			CreatedAt:    time.Now(),
@@ -342,7 +342,7 @@ func TestSingleMemberFailureDoesNotBlockOthers(t *testing.T) {
 func TestConcurrentWebhookEventsFromSamePlexAccount(t *testing.T) {
 	t.Run("concurrent_events_sequential_processing", func(t *testing.T) {
 		// Create a family group
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "test-group-8",
 			PlexUsername: "ConcurrentEventsTV",
 			CreatedAt:    time.Now(),
@@ -383,7 +383,7 @@ func TestConcurrentWebhookEventsFromSamePlexAccount(t *testing.T) {
 func TestTraktRateLimitHandling(t *testing.T) {
 	t.Run("rate_limit_handling", func(t *testing.T) {
 		// Create a family group
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "test-group-9",
 			PlexUsername: "RateLimitTV",
 			CreatedAt:    time.Now(),

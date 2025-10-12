@@ -183,7 +183,7 @@ func TestFamilyAPIEndpoints(t *testing.T) {
 	t.Run("POST /admin/api/family-groups/{id}/members", func(t *testing.T) {
 		// Test adding member to family group endpoint
 		
-		groupID := "test-group-id"
+		_ = "test-group-id" // groupID placeholder for future use
 		
 		// Valid request payload
 		requestPayload := map[string]interface{}{
@@ -539,8 +539,8 @@ func TestFamilyAPIResponseFormats(t *testing.T) {
 		sampleResponse := map[string]interface{}{
 			"id":               "test-group-id",
 			"plex_username":    "TestTV",
-			"member_count":     3,
-			"authorized_count": 2,
+			"member_count":     float64(3),
+			"authorized_count": float64(2),
 			"webhook_url":      "/api?id=test-group-id",
 			"created_at":       "2023-01-01T00:00:00Z",
 		}

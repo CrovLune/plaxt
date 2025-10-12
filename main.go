@@ -47,7 +47,7 @@ var (
 	traktSrv      *trakt.Trakt
 	trustProxy    bool = true
 	requestLogMod string
-	appAssets     *assetManifest
+	appAssets     *assetManifest = newAssetManifest("static/dist/manifest.json")
 	templateFuncs = template.FuncMap{
 		"assetPath": assetPath,
 	}
@@ -255,7 +255,7 @@ type FamilyMemberState struct {
 }
 
 type authStateStore struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	states map[string]authState
 }
 
@@ -292,6 +292,22 @@ func (s *authStateStore) Consume(token string) (authState, bool) {
 		delete(s.states, token)
 	}
 	s.mu.Unlock()
+	if !ok {
+		return authState{}, false
+	}
+	if time.Since(state.Created) > 15*time.Minute {
+		return authState{}, false
+	}
+	return state, true
+}
+
+func (s *authStateStore) Get(token string) (authState, bool) {
+	if token == "" {
+		return authState{}, false
+	}
+	s.mu.RLock()
+	state, ok := s.states[token]
+	s.mu.RUnlock()
 	if !ok {
 		return authState{}, false
 	}
@@ -744,6 +760,14 @@ func authorizeFamilyMember(w http.ResponseWriter, r *http.Request) {
 	memberID := strings.TrimSpace(args.Get("member_id"))
 	root := SelfRoot(r)
 
+	// Get state data first to extract family_group_id for redirects
+	var familyGroupID string
+	if stateToken != "" {
+		if stateData, ok := authStates.Get(stateToken); ok && stateData.FamilyGroup != nil {
+			familyGroupID = stateData.FamilyGroup.GroupID
+		}
+	}
+
 	redirectWith := func(params map[string]string) {
 		values := url.Values{}
 		for key, value := range params {
@@ -751,7 +775,16 @@ func authorizeFamilyMember(w http.ResponseWriter, r *http.Request) {
 				values.Set(key, value)
 			}
 		}
-		target := root + "/family/wizard"
+		// Add mode=family and step=authorize to ensure proper page rendering
+		values.Set("mode", "family")
+		if _, hasStep := params["step"]; !hasStep {
+			values.Set("step", "authorize")
+		}
+		// Include family_group_id if available
+		if familyGroupID != "" {
+			values.Set("family_group_id", familyGroupID)
+		}
+		target := root + "/"
 		if len(values) > 0 {
 			target = fmt.Sprintf("%s?%s", target, values.Encode())
 		}
@@ -768,7 +801,7 @@ func authorizeFamilyMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stateData, ok := authStates.Consume(stateToken)
+	stateData, ok := authStates.Get(stateToken)
 	if !ok || stateData.FamilyGroup == nil {
 		slog.Warn("family member auth: state expired or invalid", "state", stateToken)
 		redirectWith(map[string]string{
@@ -806,19 +839,38 @@ func authorizeFamilyMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for cancellation
+	// If no code, redirect to Trakt OAuth
 	if code == "" {
-		slog.Info("family member auth cancelled", "member_id", memberID, "label", memberState.TempLabel)
-		redirectWith(map[string]string{
-			"result":    "cancelled",
-			"member_id": memberID,
-			"label":     memberState.TempLabel,
-		})
+		// Build Trakt OAuth URL
+		if traktSrv == nil {
+			redirectWith(map[string]string{
+				"result": "error",
+				"error":  "Trakt service unavailable",
+			})
+			return
+		}
+
+		// Include member_id in redirect_uri so it's preserved through OAuth flow
+		redirectURI := fmt.Sprintf("%s/authorize/family/member?member_id=%s", root, url.QueryEscape(memberID))
+		params := url.Values{}
+		params.Set("client_id", traktSrv.ClientId)
+		params.Set("redirect_uri", redirectURI)
+		params.Set("response_type", "code")
+		params.Set("state", stateToken)
+
+		// Pass through prompt parameter to Trakt (for forcing login screen)
+		if prompt := strings.TrimSpace(args.Get("prompt")); prompt != "" {
+			params.Set("prompt", prompt)
+		}
+
+		authURL := fmt.Sprintf("https://trakt.tv/oauth/authorize?%s", params.Encode())
+		http.Redirect(w, r, authURL, http.StatusFound)
 		return
 	}
 
 	// Exchange code for tokens
-	redirectURI := root + "/authorize/family/member"
+	// Must match the redirect_uri sent to Trakt (including member_id query param)
+	redirectURI := fmt.Sprintf("%s/authorize/family/member?member_id=%s", root, url.QueryEscape(memberID))
 	result, ok := authRequestFunc(redirectURI, "", code, "", "authorization_code")
 	if !ok {
 		// Extract error details
@@ -980,14 +1032,68 @@ func authorizeFamilyMember(w http.ResponseWriter, r *http.Request) {
 	// Re-save state for continued wizard flow
 	newStateToken := authStates.Create(stateData)
 
-	redirectWith(map[string]string{
-		"result":         "success",
-		"member_id":      memberID,
-		"trakt_username": traktUsername,
-		"label":          memberState.TempLabel,
-		"all_authorized": fmt.Sprintf("%t", allAuthorized),
-		"state":          newStateToken,
-	})
+	// Return a simple HTML page that closes the popup and notifies the parent window
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+
+	html := `<!DOCTYPE html>
+<html>
+<head>
+	<title>Authorization Successful</title>
+	<style>
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			height: 100vh;
+			margin: 0;
+			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+			color: white;
+		}
+		.container {
+			text-align: center;
+			padding: 2rem;
+		}
+		.checkmark {
+			font-size: 4rem;
+			margin-bottom: 1rem;
+			animation: scaleIn 0.3s ease-in-out;
+		}
+		@keyframes scaleIn {
+			0% { transform: scale(0); }
+			50% { transform: scale(1.2); }
+			100% { transform: scale(1); }
+		}
+		h1 { margin: 0 0 0.5rem 0; font-size: 1.5rem; }
+		p { margin: 0; opacity: 0.9; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<div class="checkmark">✓</div>
+		<h1>Authorization Successful</h1>
+		<p>This window will close automatically...</p>
+	</div>
+	<script>
+		// Notify parent window and close
+		if (window.opener && !window.opener.closed) {
+			window.opener.postMessage({
+				type: 'family_member_authorized',
+				member_id: '` + memberID + `',
+				trakt_username: '` + traktUsername + `',
+				state: '` + newStateToken + `',
+				all_authorized: ` + fmt.Sprintf("%t", allAuthorized) + `
+			}, window.location.origin);
+		}
+		setTimeout(function() {
+			window.close();
+		}, 1500);
+	</script>
+</body>
+</html>`
+
+	w.Write([]byte(html))
 }
 
 // calculateTokenExpiry extracts the expires_in value from Trakt OAuth response
@@ -1472,8 +1578,74 @@ func buildFamilyContext(root string, query url.Values) FamilyContext {
 		},
 	}
 
+	// Initialize default context
+	ctx := FamilyContext{
+		Steps:        steps,
+		PlexUsername: "",
+		MemberLabels: []string{},
+		Members:      []FamilyMemberState{},
+		WebhookURL:   "",
+		Result:       "",
+		Banner:       nil,
+	}
+
 	// Check for family mode result
 	result := strings.ToLower(query.Get("result"))
+	ctx.Result = result
+
+	// Check for step parameter to determine which step user is on
+	stepParam := strings.ToLower(query.Get("step"))
+	familyGroupID := query.Get("family_group_id")
+
+	// Try to load family group if we have an ID or if we're on a step beyond setup
+	if storage != nil && familyGroupID != "" {
+		r := context.Background()
+		familyGroup, err := storage.GetFamilyGroup(r, familyGroupID)
+		if err == nil && familyGroup != nil {
+			ctx.PlexUsername = familyGroup.PlexUsername
+			ctx.WebhookURL = fmt.Sprintf("%s/api?id=%s", root, familyGroup.ID)
+
+				// Load family members
+				members, err := storage.ListGroupMembers(r, familyGroup.ID)
+				if err == nil && len(members) > 0 {
+					memberStates := make([]FamilyMemberState, 0, len(members))
+					for _, m := range members {
+						memberStates = append(memberStates, FamilyMemberState{
+							MemberID:            m.ID,
+							TempLabel:           m.TempLabel,
+							TraktUsername:       m.TraktUsername,
+							AuthorizationStatus: m.AuthorizationStatus,
+						})
+					}
+					ctx.Members = memberStates
+
+					// Update step states based on authorization progress
+					allAuthorized := true
+					anyAuthorized := false
+					for _, m := range memberStates {
+						if m.AuthorizationStatus == "authorized" {
+							anyAuthorized = true
+						} else {
+							allAuthorized = false
+						}
+					}
+
+					if allAuthorized && len(memberStates) > 0 {
+						// All members authorized - show webhook step
+						steps[0].State = StepComplete
+						steps[1].State = StepComplete
+						steps[2].State = StepActive
+					} else if anyAuthorized || stepParam == "authorize" {
+						// Some members authorized or explicitly on authorize step
+						steps[0].State = StepComplete
+						steps[1].State = StepActive
+						steps[2].State = StepFuture
+					}
+				}
+		}
+	}
+
+	// Check for family mode result and override step states if needed
 	if result != "" {
 		// Update step states based on result
 		switch result {
@@ -1488,15 +1660,8 @@ func buildFamilyContext(root string, query url.Values) FamilyContext {
 		}
 	}
 
-	return FamilyContext{
-		Steps:        steps,
-		PlexUsername: "",
-		MemberLabels: []string{},
-		Members:     []FamilyMemberState{},
-		WebhookURL:  "",
-		Result:      result,
-		Banner:      nil,
-	}
+	ctx.Steps = steps
+	return ctx
 }
 
 func buildOnboardingContext(root string, query url.Values) OnboardingContext {
@@ -3231,7 +3396,6 @@ func isTransientError(err error) bool {
 func main() {
 	// init structured logging
 	logging.Init()
-	appAssets = newAssetManifest("static/dist/manifest.json")
 	// read trust proxy flag
 	trustProxy = true
 	if v := strings.ToLower(strings.TrimSpace(os.Getenv("TRUST_PROXY"))); v != "" {

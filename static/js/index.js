@@ -184,6 +184,7 @@
       mode = 'onboarding';
     }
     // Allow renew mode even if no users - show empty state message
+    var previousMode = body.dataset.mode;
     body.dataset.mode = mode;
     modeButtons.forEach(function(btn) {
       var target = btn.getAttribute('data-mode-toggle');
@@ -196,6 +197,8 @@
     var url = new URL(window.location.href);
     if (mode === 'renew' && hasManual) {
       url.searchParams.set('mode', 'renew');
+    } else if (mode === 'family') {
+      url.searchParams.set('mode', 'family');
     } else {
       url.searchParams.delete('mode');
     }
@@ -203,10 +206,13 @@
     if (mode === 'renew') {
       refreshManualWizard();
     } else if (mode === 'family') {
-      // Clear any existing family state when switching to family mode
-      localStorage.removeItem('plaxtFamilyStep');
-      sessionStorage.removeItem('familyState');
-      sessionStorage.removeItem('familyGroupId');
+      // Only clear family state when switching FROM another mode TO family mode
+      // Don't clear if already in family mode (e.g., page reload or navigation within wizard)
+      if (previousMode && previousMode !== 'family') {
+        localStorage.removeItem('plaxtFamilyStep');
+        sessionStorage.removeItem('familyState');
+        sessionStorage.removeItem('familyGroupId');
+      }
       refreshFamilyWizard();
     } else {
       refreshOnboardingWizard();
@@ -338,6 +344,9 @@
     }
     if (extra && extra.mode) {
       url.searchParams.set('mode', extra.mode);
+    }
+    if (extra && extra.family_group_id) {
+      url.searchParams.set('family_group_id', extra.family_group_id);
     }
     if (!extra || !extra.result) {
       url.searchParams.delete('result');
@@ -675,6 +684,9 @@
   } else if (urlMode === 'renew' && hasManual) {
     // URL says renew and we have manual users available
     initialMode = 'renew';
+  } else if (urlMode === 'family') {
+    // URL explicitly says family mode
+    initialMode = 'family';
   } else if (onboardingResult) {
     // If there's an onboarding result, force onboarding mode
     initialMode = 'onboarding';
@@ -690,6 +702,12 @@
   }
   setMode(initialMode);
 
+  // Load family members if we're on the authorize step
+  var urlParams = new URLSearchParams(window.location.search);
+  var familyGroupId = urlParams.get('family_group_id');
+  if (familyGroupId && body.dataset.mode === 'family') {
+    loadFamilyMembers(familyGroupId);
+  }
 
   resetOnboardingStateIfComplete();
   resetManualStateIfComplete();
@@ -788,6 +806,65 @@
     if (familyAuthError) {
       familyAuthError.textContent = message;
     }
+  }
+
+  function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  function loadFamilyMembers(groupId) {
+    if (!groupId) return;
+    
+    fetch('/admin/api/family-groups/' + encodeURIComponent(groupId))
+      .then(function(response) {
+        if (!response.ok) {
+          throw new Error('Failed to load family group');
+        }
+        return response.json();
+      })
+      .then(function(data) {
+        if (data.members && data.members.length > 0) {
+          renderFamilyMembers(data.members);
+        }
+      })
+      .catch(function(err) {
+        console.error('Failed to load family members:', err);
+        showFamilyAuthError('Failed to load family members');
+      });
+  }
+
+  function renderFamilyMembers(members) {
+    var memberAuthList = document.querySelector('.js-member-auth-list');
+    if (!memberAuthList) return;
+
+    memberAuthList.innerHTML = members.map(function(member) {
+      var statusText = 'Pending';
+      var statusClass = 'status-pending';
+      var actionHtml = '';
+
+      if (member.authorization_status === 'authorized') {
+        statusText = '✓ Authorized';
+        statusClass = 'status-authorized';
+        actionHtml = '<span class="text-success">' + (member.trakt_username || '') + '</span>';
+      } else if (member.authorization_status === 'failed') {
+        statusText = '✗ Failed';
+        statusClass = 'status-failed';
+        actionHtml = '<button type="button" class="button-secondary js-authorize-member" data-member-id="' + member.id + '">Retry</button>';
+      } else {
+        actionHtml = '<button type="button" class="button-secondary js-authorize-member" data-member-id="' + member.id + '">Authorize</button>';
+      }
+
+      return '<tr data-member-id="' + member.id + '">' +
+        '<td><strong>' + escapeHtml(member.temp_label) + '</strong></td>' +
+        '<td><span class="status-badge ' + statusClass + ' js-member-status">' + statusText + '</span></td>' +
+        '<td>' + actionHtml + '</td>' +
+        '</tr>';
+    }).join('');
+
+    // Update counter after rendering members
+    checkAllAuthorized();
   }
 
   function updateMemberButtons() {
@@ -928,9 +1005,11 @@
         sessionStorage.setItem('familyState', data.state);
         sessionStorage.setItem('familyGroupId', data.family_group_id);
         localStorage.setItem('plaxtFamilyStep', 'authorize');
-        updateURLForStep('authorize');
+        updateURLForStep('authorize', { family_group_id: data.family_group_id });
         setStepStates(familySteps, familyProgress, 'authorize', 'family');
         setMode('family');
+        // Load family members dynamically
+        loadFamilyMembers(data.family_group_id);
       }).catch(function(err) {
         showFamilyError(err.message);
       });
@@ -957,6 +1036,27 @@
       pollMemberAuthorization(memberId);
     });
   }
+
+  // Listen for postMessage from authorization popup
+  window.addEventListener('message', function(event) {
+    // Verify origin for security
+    if (event.origin !== window.location.origin) return;
+
+    if (event.data && event.data.type === 'family_member_authorized') {
+      // Update sessionStorage with new state token
+      if (event.data.state) {
+        sessionStorage.setItem('familyState', event.data.state);
+      }
+
+      // Update member status in UI immediately
+      if (event.data.member_id) {
+        updateMemberStatus(event.data.member_id, 'authorized', event.data.trakt_username);
+      }
+
+      // Check and update counter
+      checkAllAuthorized();
+    }
+  });
 
   function pollMemberAuthorization(memberId) {
     var groupId = sessionStorage.getItem('familyGroupId');
@@ -1046,10 +1146,10 @@
     }
 
     if (allAuthorized) {
+      var groupId = sessionStorage.getItem('familyGroupId');
       localStorage.setItem('plaxtFamilyStep', 'webhook');
-      updateURLForStep('webhook');
-      setStepStates(familySteps, familyProgress, 'webhook', 'family');
-      setMode('family');
+      // Reload the page to get fresh data from server with webhook URL and member list
+      window.location.href = '/?step=webhook&family_group_id=' + encodeURIComponent(groupId) + '&mode=family';
     }
   }
 

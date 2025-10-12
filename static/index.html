@@ -408,7 +408,7 @@
               </thead>
               <tbody class="js-member-auth-list">
                 {{ range .Family.Members }}
-                  <tr data-member-id="{{ .ID }}">
+                  <tr data-member-id="{{ .MemberID }}">
                     <td><strong>{{ .TempLabel }}</strong></td>
                     <td>
                       <span class="status-badge status-{{ .AuthorizationStatus }} js-member-status">
@@ -419,11 +419,11 @@
                     </td>
                     <td>
                       {{ if eq .AuthorizationStatus "pending" }}
-                        <button type="button" class="button-secondary js-authorize-member" data-member-id="{{ .ID }}">
+                        <button type="button" class="button-secondary js-authorize-member" data-member-id="{{ .MemberID }}">
                           Authorize
                         </button>
                       {{ else if eq .AuthorizationStatus "failed" }}
-                        <button type="button" class="button-secondary js-authorize-member" data-member-id="{{ .ID }}">
+                        <button type="button" class="button-secondary js-authorize-member" data-member-id="{{ .MemberID }}">
                           Retry
                         </button>
                       {{ else }}

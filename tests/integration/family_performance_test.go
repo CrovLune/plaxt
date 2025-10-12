@@ -14,7 +14,7 @@ import (
 func TestTenMemberBroadcastPerformance(t *testing.T) {
 	t.Run("ten_member_broadcast_latency", func(t *testing.T) {
 		// Create a family group with 10 members (maximum allowed)
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "perf-group-1",
 			PlexUsername: "PerformanceTV",
 			CreatedAt:    time.Now(),
@@ -78,7 +78,7 @@ func TestBroadcastLatencyScaling(t *testing.T) {
 		expectedMaxLatency := 1 * time.Second // Should be very fast with 2 members
 		
 		// Create family group with 2 members
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "scale-group-2",
 			PlexUsername: "ScaleTV2",
 			CreatedAt:    time.Now(),
@@ -115,7 +115,7 @@ func TestBroadcastLatencyScaling(t *testing.T) {
 		expectedMaxLatency := 2 * time.Second // Should be reasonable with 5 members
 		
 		// Create family group with 5 members
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "scale-group-5",
 			PlexUsername: "ScaleTV5",
 			CreatedAt:    time.Now(),
@@ -152,7 +152,7 @@ func TestBroadcastLatencyScaling(t *testing.T) {
 		expectedMaxLatency := 5 * time.Second // SC-002 requirement
 		
 		// Create family group with 10 members
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "scale-group-10",
 			PlexUsername: "ScaleTV10",
 			CreatedAt:    time.Now(),
@@ -213,7 +213,7 @@ func TestConcurrentWebhookPerformance(t *testing.T) {
 		// Test that webhooks from the same Plex account are processed sequentially
 		
 		// Create a family group
-		group := &store.FamilyGroup{
+		_ = &store.FamilyGroup{
 			ID:           "sequential-group",
 			PlexUsername: "SequentialTV",
 			CreatedAt:    time.Now(),
