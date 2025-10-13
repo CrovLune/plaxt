@@ -1,22 +1,64 @@
-.users-table--log td {
-  vertical-align: top;
-  padding-top: 0.75rem;
-  padding-bottom: 0.75rem;
+/* Ensure queue log table matches main table styling exactly */
+.users-table--log {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
 }
 
+.users-table--log thead {
+  background: #f9fafb;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.users-table--log th {
+  text-align: left;
+  padding: 1rem;
+  font-weight: 600;
+  color: #374151;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.users-table--log td {
+  padding: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+  color: #111827;
+  font-size: 0.875rem;
+  vertical-align: top;
+}
+
+.users-table--log tbody tr:hover {
+  background: #f9fafb;
+}
+
+.users-table--log tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Specific styling for event log columns */
 .users-table--log td:first-child {
   white-space: nowrap;
   font-family: 'Monaco', 'Courier New', monospace;
   color: #6b7280;
+  font-size: 0.8125rem;
+}
+
+.users-table--log td:nth-child(2) {
+  font-weight: 600;
+  color: #111827;
 }
 
 .users-table--log td:nth-child(3) {
   font-weight: 600;
   text-transform: capitalize;
+  color: #374151;
 }
 
 .users-table--log td:nth-child(4) {
   font-family: 'Monaco', 'Courier New', monospace;
+  color: #6b7280;
+  font-size: 0.8125rem;
 }
 
 .users-table--log .event-details {

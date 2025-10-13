@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"crovlune/plaxt/lib/common"
@@ -616,4 +617,209 @@ func (t *Trakt) ScrobbleFromQueue(action string, item common.CacheItem, accessTo
 	}
 
 	return fmt.Errorf("scrobble failed with status %d", resp.StatusCode)
+}
+
+// ParseWebhookForScrobble extracts scrobble action and body from a Plex webhook.
+// Returns (scrobbleBody, action, shouldScrobble) where shouldScrobble indicates
+// if the webhook is eligible for scrobbling.
+func (t *Trakt) ParseWebhookForScrobble(hook *plexhooks.Webhook) (common.ScrobbleBody, string, bool) {
+	if hook == nil {
+		return common.ScrobbleBody{}, "", false
+	}
+	if hook.Player.UUID == "" || hook.Metadata.RatingKey == "" {
+		return common.ScrobbleBody{}, "", false
+	}
+
+	// Get action from webhook event
+	action, cache, progress := t.getAction(hook)
+	if action == "" {
+		return common.ScrobbleBody{}, "", false
+	}
+
+	// Check if item changed or if it's a duplicate event
+	itemChanged := true
+	if cache.ServerUuid == hook.Server.UUID {
+		itemChanged = false
+		if cache.LastAction == actionStop || (cache.LastAction == action && progress == cache.Body.Progress) {
+			// Duplicate event
+			return common.ScrobbleBody{}, "", false
+		}
+	}
+
+	// Parse media metadata
+	var body *common.ScrobbleBody
+	if itemChanged {
+		switch hook.Metadata.LibrarySectionType {
+		case "show":
+			body = t.handleShow(hook)
+			if body == nil {
+				return common.ScrobbleBody{}, "", false
+			}
+		case "movie":
+			body = t.handleMovie(hook)
+			if body == nil {
+				return common.ScrobbleBody{}, "", false
+			}
+		default:
+			return common.ScrobbleBody{}, "", false
+		}
+	} else {
+		// Use cached body
+		body = &cache.Body
+	}
+
+	// Set progress
+	body.Progress = progress
+
+	return *body, action, true
+}
+
+// BroadcastScrobble sends a scrobble event to multiple Trakt accounts concurrently.
+// It performs goroutine fan-out for parallel API calls while collecting errors and
+// logging per FR-008b requirements (timestamp, username, media title, error, event ID).
+// Returns a slice of errors (one per failed member), or nil if all succeed.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - action: Trakt scrobble action ("start", "pause", "stop")
+//   - body: Scrobble body (media metadata + progress)
+//   - members: Group members with valid tokens
+//   - eventID: Plex webhook event ID for correlation (FR-008b)
+//   - mediaTitle: Human-readable media description for logging (FR-008b)
+//
+// Returns:
+//   - []BroadcastError: Errors for failed members (includes member info for retry queue)
+func (t *Trakt) BroadcastScrobble(
+	ctx context.Context,
+	action string,
+	body common.ScrobbleBody,
+	members []*store.GroupMember,
+	eventID string,
+	mediaTitle string,
+) []BroadcastError {
+	if len(members) == 0 {
+		return nil
+	}
+
+	type result struct {
+		member *store.GroupMember
+		err    error
+		status int // HTTP status code for queue decision
+	}
+
+	resultChan := make(chan result, len(members))
+	var wg sync.WaitGroup
+
+	// Fan-out: launch goroutine per member
+	for _, member := range members {
+		wg.Add(1)
+		go func(m *store.GroupMember) {
+			defer wg.Done()
+
+			// Build scrobble request
+			URL := fmt.Sprintf("https://api.trakt.tv/scrobble/%s", action)
+			bodyJSON, _ := json.Marshal(body)
+
+			req, err := http.NewRequestWithContext(ctx, "POST", URL, bytes.NewBuffer(bodyJSON))
+			if err != nil {
+				resultChan <- result{member: m, err: fmt.Errorf("build request: %w", err), status: 0}
+				return
+			}
+
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", m.AccessToken))
+			req.Header.Set("trakt-api-version", "2")
+			req.Header.Set("trakt-api-key", t.ClientId)
+
+			// Execute HTTP request
+			resp, err := t.httpClient.Do(req)
+			if err != nil {
+				// Network error - should be queued
+				resultChan <- result{member: m, err: fmt.Errorf("http error: %w", err), status: 0}
+				// Log per FR-008b
+				slog.Error("broadcast scrobble failure",
+					"timestamp", time.Now().Format(time.RFC3339),
+					"member_username", m.TraktUsername,
+					"media_title", mediaTitle,
+					"error", err.Error(),
+					"event_id", eventID,
+					"action", action,
+				)
+				return
+			}
+			defer resp.Body.Close()
+
+			// Check for transient errors (queue-able)
+			if resp.StatusCode == http.StatusTooManyRequests ||
+			   resp.StatusCode == http.StatusServiceUnavailable ||
+			   resp.StatusCode == http.StatusBadGateway ||
+			   resp.StatusCode == http.StatusGatewayTimeout {
+				errMsg := fmt.Sprintf("transient error: HTTP %d", resp.StatusCode)
+				resultChan <- result{member: m, err: errors.New(errMsg), status: resp.StatusCode}
+				// Log per FR-008b
+				slog.Warn("broadcast scrobble transient failure",
+					"timestamp", time.Now().Format(time.RFC3339),
+					"member_username", m.TraktUsername,
+					"media_title", mediaTitle,
+					"error", errMsg,
+					"event_id", eventID,
+					"action", action,
+					"http_status", resp.StatusCode,
+				)
+				return
+			}
+
+			// Success
+			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+				resultChan <- result{member: m, err: nil, status: resp.StatusCode}
+				// Log success per FR-008b
+				slog.Info("broadcast scrobble success",
+					"timestamp", time.Now().Format(time.RFC3339),
+					"member_username", m.TraktUsername,
+					"media_title", mediaTitle,
+					"event_id", eventID,
+					"action", action,
+					"progress", body.Progress,
+				)
+				return
+			}
+
+			// Permanent failure (non-retryable)
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			errMsg := fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+			resultChan <- result{member: m, err: errors.New(errMsg), status: resp.StatusCode}
+			// Log per FR-008b
+			slog.Error("broadcast scrobble permanent failure",
+				"timestamp", time.Now().Format(time.RFC3339),
+				"member_username", m.TraktUsername,
+				"media_title", mediaTitle,
+				"error", errMsg,
+				"event_id", eventID,
+				"action", action,
+				"http_status", resp.StatusCode,
+			)
+		}(member)
+	}
+
+	// Wait for all goroutines
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect errors
+	var broadcastErrors []BroadcastError
+	for res := range resultChan {
+		if res.err != nil {
+			broadcastErrors = append(broadcastErrors, BroadcastError{
+				Member:     res.member,
+				Err:        res.err,
+				HTTPStatus: res.status,
+				EventID:    eventID,
+				MediaTitle: mediaTitle,
+			})
+		}
+	}
+
+	return broadcastErrors
 }

@@ -1,4 +1,6 @@
-/* Override wizard.css to use light theme for admin pages */
+/* Common Admin Styles - Light Theme Override */
+
+/* Base Theme Overrides */
 body {
   background: #f3f4f6 !important;
   color: #111827 !important;
@@ -14,6 +16,7 @@ body::after {
   display: none !important;
 }
 
+/* Layout Components */
 .admin-container {
   max-width: 1400px;
   margin: 0 auto;
@@ -46,6 +49,7 @@ body::after {
   font-size: 0.875rem;
 }
 
+/* Stats Cards */
 .admin-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -76,6 +80,7 @@ body::after {
   color: #111827;
 }
 
+/* Table Components */
 .users-table-container {
   background: white;
   border: 1px solid #e5e7eb;
@@ -138,6 +143,7 @@ body::after {
   border-bottom: none;
 }
 
+/* Status Indicators */
 .status-indicator {
   display: inline-flex;
   align-items: center;
@@ -219,7 +225,7 @@ body::after {
   background: #ef4444;
 }
 
-/* Pulse animation for draining status */
+/* Animations */
 .pulse .status-dot {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
@@ -233,6 +239,7 @@ body::after {
   }
 }
 
+/* Button Components */
 .btn {
   padding: 0.5rem 1rem;
   border-radius: 6px;
@@ -291,10 +298,11 @@ body::after {
   font-size: 0.813rem;
 }
 
+/* State Components */
 .empty-state {
   text-align: center;
   padding: 3rem 1rem;
-  color: white;
+  color: white !important;
 }
 
 .empty-state-icon {
@@ -302,6 +310,7 @@ body::after {
   margin-bottom: 1rem;
 }
 
+/* Responsive Design */
 @media (max-width: 1024px) {
   .admin-container {
     padding: 1.5rem;

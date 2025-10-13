@@ -14,6 +14,7 @@ import (
 
 	"crovlune/plaxt/lib/common"
 	"crovlune/plaxt/lib/store"
+
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 )
@@ -147,6 +148,66 @@ func (s MockSuccessStore) PurgeQueueForUser(ctx context.Context, userID string) 
 	return 0, nil
 }
 
+func (s MockSuccessStore) CreateFamilyGroup(ctx context.Context, group *store.FamilyGroup) error {
+	return store.ErrNotSupported
+}
+
+func (s MockSuccessStore) GetFamilyGroup(ctx context.Context, groupID string) (*store.FamilyGroup, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s MockSuccessStore) GetFamilyGroupByPlex(ctx context.Context, plexUsername string) (*store.FamilyGroup, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s MockSuccessStore) ListFamilyGroups(ctx context.Context) ([]*store.FamilyGroup, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s MockSuccessStore) DeleteFamilyGroup(ctx context.Context, groupID string) error {
+	return store.ErrNotSupported
+}
+
+func (s MockSuccessStore) AddGroupMember(ctx context.Context, member *store.GroupMember) error {
+	return store.ErrNotSupported
+}
+
+func (s MockSuccessStore) GetGroupMember(ctx context.Context, memberID string) (*store.GroupMember, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s MockSuccessStore) UpdateGroupMember(ctx context.Context, member *store.GroupMember) error {
+	return store.ErrNotSupported
+}
+
+func (s MockSuccessStore) RemoveGroupMember(ctx context.Context, groupID, memberID string) error {
+	return store.ErrNotSupported
+}
+
+func (s MockSuccessStore) ListGroupMembers(ctx context.Context, groupID string) ([]*store.GroupMember, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s MockSuccessStore) GetGroupMemberByTrakt(ctx context.Context, groupID, traktUsername string) (*store.GroupMember, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s MockSuccessStore) EnqueueRetryItem(ctx context.Context, item *store.RetryQueueItem) error {
+	return store.ErrNotSupported
+}
+
+func (s MockSuccessStore) ListDueRetryItems(ctx context.Context, now time.Time, limit int) ([]*store.RetryQueueItem, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s MockSuccessStore) MarkRetrySuccess(ctx context.Context, id string) error {
+	return store.ErrNotSupported
+}
+
+func (s MockSuccessStore) MarkRetryFailure(ctx context.Context, id string, attempt int, nextAttempt time.Time, lastErr string, permanent bool) error {
+	return store.ErrNotSupported
+}
+
 type MockFailStore struct{}
 
 func (s MockFailStore) Ping(ctx context.Context) error            { return errors.New("OH NO") }
@@ -182,6 +243,66 @@ func (s MockFailStore) ListUsersWithQueuedEvents(ctx context.Context) ([]string,
 }
 func (s MockFailStore) PurgeQueueForUser(ctx context.Context, userID string) (int, error) {
 	return 0, errors.New("OH NO")
+}
+
+func (s MockFailStore) CreateFamilyGroup(ctx context.Context, group *store.FamilyGroup) error {
+	return errors.New("OH NO")
+}
+
+func (s MockFailStore) GetFamilyGroup(ctx context.Context, groupID string) (*store.FamilyGroup, error) {
+	return nil, errors.New("OH NO")
+}
+
+func (s MockFailStore) GetFamilyGroupByPlex(ctx context.Context, plexUsername string) (*store.FamilyGroup, error) {
+	return nil, errors.New("OH NO")
+}
+
+func (s MockFailStore) ListFamilyGroups(ctx context.Context) ([]*store.FamilyGroup, error) {
+	return nil, errors.New("OH NO")
+}
+
+func (s MockFailStore) DeleteFamilyGroup(ctx context.Context, groupID string) error {
+	return errors.New("OH NO")
+}
+
+func (s MockFailStore) AddGroupMember(ctx context.Context, member *store.GroupMember) error {
+	return errors.New("OH NO")
+}
+
+func (s MockFailStore) GetGroupMember(ctx context.Context, memberID string) (*store.GroupMember, error) {
+	return nil, errors.New("OH NO")
+}
+
+func (s MockFailStore) UpdateGroupMember(ctx context.Context, member *store.GroupMember) error {
+	return errors.New("OH NO")
+}
+
+func (s MockFailStore) RemoveGroupMember(ctx context.Context, groupID, memberID string) error {
+	return errors.New("OH NO")
+}
+
+func (s MockFailStore) ListGroupMembers(ctx context.Context, groupID string) ([]*store.GroupMember, error) {
+	return nil, errors.New("OH NO")
+}
+
+func (s MockFailStore) GetGroupMemberByTrakt(ctx context.Context, groupID, traktUsername string) (*store.GroupMember, error) {
+	return nil, errors.New("OH NO")
+}
+
+func (s MockFailStore) EnqueueRetryItem(ctx context.Context, item *store.RetryQueueItem) error {
+	return errors.New("OH NO")
+}
+
+func (s MockFailStore) ListDueRetryItems(ctx context.Context, now time.Time, limit int) ([]*store.RetryQueueItem, error) {
+	return nil, errors.New("OH NO")
+}
+
+func (s MockFailStore) MarkRetrySuccess(ctx context.Context, id string) error {
+	return errors.New("OH NO")
+}
+
+func (s MockFailStore) MarkRetryFailure(ctx context.Context, id string, attempt int, nextAttempt time.Time, lastErr string, permanent bool) error {
+	return errors.New("OH NO")
 }
 
 func TestHealthcheck(t *testing.T) {
@@ -1069,3 +1190,126 @@ func (s *persistTestStore) ListUsersWithQueuedEvents(ctx context.Context) ([]str
 func (s *persistTestStore) PurgeQueueForUser(ctx context.Context, userID string) (int, error) {
 	return 0, nil
 }
+
+func (s *persistTestStore) CreateFamilyGroup(ctx context.Context, group *store.FamilyGroup) error {
+	return store.ErrNotSupported
+}
+
+func (s *persistTestStore) GetFamilyGroup(ctx context.Context, groupID string) (*store.FamilyGroup, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s *persistTestStore) GetFamilyGroupByPlex(ctx context.Context, plexUsername string) (*store.FamilyGroup, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s *persistTestStore) ListFamilyGroups(ctx context.Context) ([]*store.FamilyGroup, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s *persistTestStore) DeleteFamilyGroup(ctx context.Context, groupID string) error {
+	return store.ErrNotSupported
+}
+
+func (s *persistTestStore) AddGroupMember(ctx context.Context, member *store.GroupMember) error {
+	return store.ErrNotSupported
+}
+
+func (s *persistTestStore) GetGroupMember(ctx context.Context, memberID string) (*store.GroupMember, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s *persistTestStore) UpdateGroupMember(ctx context.Context, member *store.GroupMember) error {
+	return store.ErrNotSupported
+}
+
+func (s *persistTestStore) RemoveGroupMember(ctx context.Context, groupID, memberID string) error {
+	return store.ErrNotSupported
+}
+
+func (s *persistTestStore) ListGroupMembers(ctx context.Context, groupID string) ([]*store.GroupMember, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s *persistTestStore) GetGroupMemberByTrakt(ctx context.Context, groupID, traktUsername string) (*store.GroupMember, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s *persistTestStore) EnqueueRetryItem(ctx context.Context, item *store.RetryQueueItem) error {
+	return store.ErrNotSupported
+}
+
+func (s *persistTestStore) ListDueRetryItems(ctx context.Context, now time.Time, limit int) ([]*store.RetryQueueItem, error) {
+	return nil, store.ErrNotSupported
+}
+
+func (s *persistTestStore) MarkRetrySuccess(ctx context.Context, id string) error {
+	return store.ErrNotSupported
+}
+
+func (s *persistTestStore) MarkRetryFailure(ctx context.Context, id string, attempt int, nextAttempt time.Time, lastErr string, permanent bool) error {
+	return store.ErrNotSupported
+}
+
+// --- add to MockSuccessStore ---
+func (s MockSuccessStore) CreateNotification(ctx context.Context, n *store.Notification) error {
+	return store.ErrNotSupported
+}
+
+// --- add to MockFailStore ---
+func (s MockFailStore) CreateNotification(ctx context.Context, n *store.Notification) error {
+	return errors.New("OH NO")
+}
+
+// --- add to persistTestStore ---
+func (s *persistTestStore) CreateNotification(ctx context.Context, n *store.Notification) error {
+	return store.ErrNotSupported
+}
+
+// --- add to MockSuccessStore ---
+func (s MockSuccessStore) DeleteNotification(ctx context.Context, id string) error {
+	return store.ErrNotSupported
+}
+
+// --- add to MockFailStore ---
+func (s MockFailStore) DeleteNotification(ctx context.Context, id string) error {
+	return errors.New("OH NO")
+}
+
+// --- add to persistTestStore ---
+func (s *persistTestStore) DeleteNotification(ctx context.Context, id string) error {
+	return store.ErrNotSupported
+}
+
+// --- add to MockSuccessStore ---
+func (s MockSuccessStore) DismissNotification(ctx context.Context, id string) error {
+	return store.ErrNotSupported
+}
+
+// --- add to MockFailStore ---
+func (s MockFailStore) DismissNotification(ctx context.Context, id string) error {
+	return errors.New("OH NO")
+}
+
+// --- add to persistTestStore ---
+func (s *persistTestStore) DismissNotification(ctx context.Context, id string) error {
+	return store.ErrNotSupported
+}
+
+// --- fix signatures to include the bool flag ---
+
+// MockSuccessStore
+func (s MockSuccessStore) GetNotifications(ctx context.Context, userID string, includeDismissed bool) ([]*store.Notification, error) {
+	return nil, store.ErrNotSupported
+}
+
+// MockFailStore
+func (s MockFailStore) GetNotifications(ctx context.Context, userID string, includeDismissed bool) ([]*store.Notification, error) {
+	return nil, errors.New("OH NO")
+}
+
+// persistTestStore
+func (s *persistTestStore) GetNotifications(ctx context.Context, userID string, includeDismissed bool) ([]*store.Notification, error) {
+	return nil, store.ErrNotSupported
+}
+

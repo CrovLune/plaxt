@@ -1,8 +1,13 @@
 let users = [];
+let familyGroups = [];
 
 document.addEventListener('DOMContentLoaded', () => {
   loadUsers();
-  setInterval(loadUsers, 30000);
+  loadFamilyGroups();
+  setInterval(() => {
+    loadUsers();
+    loadFamilyGroups();
+  }, 30000);
 });
 
 async function loadUsers() {
@@ -16,6 +21,20 @@ async function loadUsers() {
     updateStats();
   } catch (error) {
     showError('Failed to load users: ' + error.message);
+  }
+}
+
+async function loadFamilyGroups() {
+  try {
+    const response = await fetch('/admin/api/family-groups');
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    familyGroups = await response.json();
+    updateStats();
+  } catch (error) {
+    // Silently fail if family groups endpoint not available
+    console.error('Failed to load family groups:', error);
   }
 }
 
@@ -78,6 +97,7 @@ function updateStats() {
   const expired = users.filter(u => u.status === 'expired').length;
 
   document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-family-groups').textContent = familyGroups.length;
   document.getElementById('stat-healthy').textContent = healthy;
   document.getElementById('stat-warning').textContent = warning;
   document.getElementById('stat-expired').textContent = expired;

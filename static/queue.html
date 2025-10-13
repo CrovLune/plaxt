@@ -1,100 +1,107 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Plaxt Admin - Queue Monitor</title>
-  <link rel="icon" type="image/png" href="/static/img/favicon.png">
-  <link rel="stylesheet" href="{{assetPath "css/wizard.css"}}">
-  <link rel="stylesheet" href="{{assetPath "css/common.css"}}">
-  <link rel="stylesheet" href="{{assetPath "css/queue.css"}}">
-</head>
-<body>
-  <div class="admin-container">
-    <div class="admin-header">
-      <h1>Queue Monitor</h1>
-      <div class="header-actions">
-        <span class="last-updated" id="last-updated">Loading...</span>
-        <a href="/admin" class="btn btn-back">← Back to Admin</a>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Plaxt Admin - Queue Monitor</title>
+    <link rel="icon" type="image/png" href="/static/img/favicon.png" />
+    <link rel="stylesheet" href="{{ assetPath "css/wizard.css" }}" />
+    <link rel="stylesheet" href="{{ assetPath "css/common.css" }}" />
+    <link rel="stylesheet" href="{{ assetPath "css/queue.css" }}" />
+  </head>
+  <body>
+    <div class="admin-container">
+      <div class="admin-header">
+        <h1>Queue Monitor</h1>
+        <div class="header-actions">
+          <span class="last-updated" id="last-updated">Loading...</span>
+          <a
+            href="/admin"
+            class="btn btn-back"
+            style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;"
+          >
+            <img src="/static/img/back.svg" alt="Back Icon" width="16" height="16" />
+            Back
+          </a>
+        </div>
       </div>
-    </div>
 
-    <!-- System Overview -->
-    <div class="admin-stats">
-      <div class="stat-card">
-        <div class="stat-label">Total Users</div>
-        <div class="stat-value" id="total-users">-</div>
+      <!-- System Overview -->
+      <div class="admin-stats">
+        <div class="stat-card">
+          <div class="stat-label">Total Users</div>
+          <div class="stat-value" id="total-users">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Active Queues</div>
+          <div class="stat-value" id="active-queues">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Events</div>
+          <div class="stat-value" id="total-events">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">System Mode</div>
+          <div class="stat-value" id="system-mode">-</div>
+        </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-label">Active Queues</div>
-        <div class="stat-value" id="active-queues">-</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Total Events</div>
-        <div class="stat-value" id="total-events">-</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">System Mode</div>
-        <div class="stat-value" id="system-mode">-</div>
-      </div>
-    </div>
 
-    <!-- Per-User Queue Table -->
-    <div class="users-table-container">
-      <div class="table-header">
-        <h2>Queue Status by User</h2>
-      </div>
-      <table class="users-table">
-        <thead>
-          <tr>
-            <th>User</th>
-            <th>Events</th>
-            <th>Oldest Event</th>
-            <th>Status</th>
-            <th>Processed/Failed</th>
-          </tr>
-        </thead>
-        <tbody id="queue-table-body">
-          <tr>
-            <td colspan="5" class="empty-state">
-              <div class="empty-state-icon">⏳</div>
-              <div>Loading queue status...</div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Recent Events Log -->
-    <div class="users-table-container">
-      <div class="table-header">
-        <h2>Recent Queue Events</h2>
-      </div>
-      <div class="table-scroll">
-        <table class="users-table users-table--log" id="event-log">
+      <!-- Per-User Queue Table -->
+      <div class="users-table-container">
+        <div class="table-header">
+          <h2>Queue Status by User</h2>
+        </div>
+        <table class="users-table">
           <thead>
             <tr>
-              <th>Time</th>
               <th>User</th>
-              <th>Operation</th>
-              <th>Event ID</th>
-              <th>Details</th>
+              <th>Events</th>
+              <th>Oldest Event</th>
+              <th>Status</th>
+              <th>Processed/Failed</th>
             </tr>
           </thead>
-          <tbody id="event-log-body">
+          <tbody id="queue-table-body">
             <tr>
               <td colspan="5" class="empty-state">
-                <div class="empty-state-icon">📋</div>
-                <div>Loading recent events...</div>
+                <div class="empty-state-icon">⏳</div>
+                <div>Loading queue status...</div>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-    </div>
-  </div>
 
-  <script src="{{assetPath "js/common.js"}}"></script>
-  <script src="{{assetPath "js/queue.js"}}"></script>
-</body>
+      <!-- Recent Events Log -->
+      <div class="users-table-container">
+        <div class="table-header">
+          <h2>Recent Queue Events</h2>
+        </div>
+        <div class="table-scroll">
+          <table class="users-table users-table--log" id="event-log">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>User</th>
+                <th>Operation</th>
+                <th>Event ID</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="event-log-body">
+              <tr>
+                <td colspan="5" class="empty-state">
+                  <div class="empty-state-icon">📋</div>
+                  <div>Loading recent events...</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script src="{{ assetPath "js/common.js" }}"></script>
+    <script src="{{ assetPath "js/queue.js" }}"></script>
+  </body>
 </html>

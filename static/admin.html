@@ -1,106 +1,144 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Plaxt Admin - User Management</title>
-  <link rel="icon" type="image/png" href="/static/img/favicon.png">
-  <link rel="stylesheet" href="{{assetPath "css/wizard.css"}}">
-  <link rel="stylesheet" href="{{assetPath "css/common.css"}}">
-  <link rel="stylesheet" href="{{assetPath "css/admin.css"}}">
-</head>
-<body>
-  <div class="admin-container">
-    <div class="admin-header">
-      <h1>User Management</h1>
-      <div style="display: flex; gap: 0.75rem;">
-        <a href="/admin/queue" class="btn btn-edit" style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 12h18M3 6h18M3 18h18"/>
-          </svg>
-          Queue Monitor
-        </a>
-        <a href="/" class=" btn btn-back">← Back to Home</a>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Plaxt Admin - User Management</title>
+    <link rel="icon" type="image/png" href="/static/img/favicon.png" />
+    <link rel="stylesheet" href="{{ assetPath "css/wizard.css" }}" />
+    <link rel="stylesheet" href="{{ assetPath "css/common.css" }}" />
+    <link rel="stylesheet" href="{{ assetPath "css/admin.css" }}" />
+  </head>
+  <body>
+    <div class="admin-container">
+      <div class="admin-header">
+        <h1>User Management</h1>
+        <div style="display: flex; gap: 0.75rem;">
+          <a
+            href="/admin/family"
+            class="btn btn-edit"
+            style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            Family Groups
+          </a>
+          <a
+            href="/admin/queue"
+            class="btn btn-edit"
+            style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12h18M3 6h18M3 18h18" />
+            </svg>
+            Queue Monitor
+          </a>
+          <a href="/" class=" btn btn-back" style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;">
+            <img src="/static/img/home.svg" alt="Home Icon" width="16" height="16" />
+            Back to Home
+          </a>
+        </div>
+      </div>
+
+      <div class="admin-stats">
+        <div class="stat-card">
+          <div class="stat-label">Total Users</div>
+          <div class="stat-value" id="stat-total">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Family Groups</div>
+          <div class="stat-value" id="stat-family-groups" style="color: #6366f1;">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Healthy</div>
+          <div class="stat-value" id="stat-healthy" style="color: #10b981;">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Warning</div>
+          <div class="stat-value" id="stat-warning" style="color: #f59e0b;">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Expired</div>
+          <div class="stat-value" id="stat-expired" style="color: #ef4444;">-</div>
+        </div>
+      </div>
+
+      <div id="error-container"></div>
+
+      <div class="users-table-container">
+        <div class="table-header">
+          <h2>All Users</h2>
+        </div>
+        <div id="table-content">
+          <div class="loading">Loading users...</div>
+        </div>
       </div>
     </div>
 
-    <div class="admin-stats">
-      <div class="stat-card">
-        <div class="stat-label">Total Users</div>
-        <div class="stat-value" id="stat-total">-</div>
+    <!-- Edit Modal -->
+    <div id="edit-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Edit User</h2>
+        </div>
+        <div class="modal-body">
+          <form id="edit-form">
+            <input type="hidden" id="edit-user-id" />
+            <div class="form-group">
+              <label for="edit-username">Plex Username</label>
+              <input type="text" id="edit-username" required />
+            </div>
+            <div class="form-group">
+              <label for="edit-display-name">Trakt Display Name</label>
+              <input type="text" id="edit-display-name" />
+            </div>
+          </form>
+        </div>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            style="border: 1px solid lightgray;"
+            onclick="closeEditModal()"
+          >
+            Cancel
+          </button>
+          <button type="button" class="btn btn-edit" onclick="saveUser()">Save Changes</button>
+        </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-label">Healthy</div>
-        <div class="stat-value" id="stat-healthy" style="color: #10b981;">-</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Warning</div>
-        <div class="stat-value" id="stat-warning" style="color: #f59e0b;">-</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Expired</div>
-        <div class="stat-value" id="stat-expired" style="color: #ef4444;">-</div>
+    </div>
+
+    <!-- Delete Modal -->
+    <div id="delete-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Delete User</h2>
+        </div>
+        <div class="modal-body">
+          <p>Are you sure you want to delete this user?</p>
+          <p><strong id="delete-user-name"></strong></p>
+          <p style="color: #dc2626; margin-top: 1rem;">This action cannot be undone.</p>
+          <input type="hidden" id="delete-user-id" />
+        </div>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            style="border: 1px solid lightgray"
+            onclick="closeDeleteModal()"
+          >
+            Cancel
+          </button>
+          <button type="button" class="btn btn-delete" onclick="confirmDelete()">Delete User</button>
+        </div>
       </div>
     </div>
 
-    <div id="error-container"></div>
-
-    <div class="users-table-container">
-      <div class="table-header">
-        <h2>All Users</h2>
-      </div>
-      <div id="table-content">
-        <div class="loading">Loading users...</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Edit Modal -->
-  <div id="edit-modal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>Edit User</h2>
-      </div>
-      <div class="modal-body">
-        <form id="edit-form">
-          <input type="hidden" id="edit-user-id">
-          <div class="form-group">
-            <label for="edit-username">Plex Username</label>
-            <input type="text" id="edit-username" required>
-          </div>
-          <div class="form-group">
-            <label for="edit-display-name">Trakt Display Name</label>
-            <input type="text" id="edit-display-name">
-          </div>
-        </form>
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="btn btn-secondary" style="border: 1px solid lightgray;" onclick="closeEditModal()">Cancel</button>
-        <button type="button" class="btn btn-edit" onclick="saveUser()">Save Changes</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Delete Modal -->
-  <div id="delete-modal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>Delete User</h2>
-      </div>
-      <div class="modal-body">
-        <p>Are you sure you want to delete this user?</p>
-        <p><strong id="delete-user-name"></strong></p>
-        <p style="color: #dc2626; margin-top: 1rem;">This action cannot be undone.</p>
-        <input type="hidden" id="delete-user-id">
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="btn btn-secondary" style="border: 1px solid lightgray" onclick="closeDeleteModal()">Cancel</button>
-        <button type="button" class="btn btn-delete" onclick="confirmDelete()">Delete User</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="{{assetPath "js/common.js"}}"></script>
-  <script src="{{assetPath "js/admin.js"}}"></script>
-</body>
+    <script src="{{ assetPath "js/common.js" }}"></script>
+    <script src="{{ assetPath "js/admin.js" }}"></script>
+  </body>
 </html>

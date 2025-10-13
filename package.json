@@ -1,0 +1,20 @@
+{
+  "name": "plaxt",
+  "version": "1.0.0",
+  "description": "Plex webhook to Trakt scrobbler",
+  "scripts": {
+    "build": "node build.js",
+    "build:dev": "node build.js --dev"
+  },
+  "devDependencies": {
+    "@prettier/plugin-xml": "^3.4.2",
+    "esbuild": "^0.19.0",
+    "prettier-plugin-go-template": "^0.0.15"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "prettier": "^3.6.2"
+  }
+}

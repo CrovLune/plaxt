@@ -21,6 +21,22 @@ RUN go mod download
 
 COPY . .
 
+# Install Node.js and build assets with esbuild
+RUN apk add --no-cache nodejs npm
+
+# Copy package files and install dependencies
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Build fingerprinted assets + manifest with esbuild
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    npm run build
+
+# Ensure outputs exist (fail the build if not)
+RUN test -s static/dist/manifest.json
+
+# Ensure the static dir exists after build
 RUN test -d static
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
